@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/cleanup-voice",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/reset-usage",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

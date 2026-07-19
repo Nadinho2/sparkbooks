@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────
+   SparkBooks Design Tokens — ledger-paper aesthetic
+   ────────────────────────────────────────────── */
+
+@theme {
+  /* Fonts */
+  --font-display: var(--font-fraunces);
+  --font-body: var(--font-inter);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-ibm-plex-mono);
+
+  /* Colors */
+  --color-paper: #EEF3EC;
+  --color-ink: #16213E;
+  --color-ink-muted: #5F5E5A;
+  --color-rule: #C9D6C9;
+  --color-money: #1E8E5A;
+  --color-money-light: #EAF3DE;
+  --color-flag: #C97A1A;
+  --color-flag-light: #FAEEDA;
+  --color-spark: #00C9B1;
+}
+
+/* ──────────────────────────────────────────────
+   Global defaults
+   ────────────────────────────────────────────── */
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+
+/* Tabular figures for all monospace — numbers align in tables */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ──────────────────────────────────────────────
+   Voice note waveform animation
+   ────────────────────────────────────────────── */
+
+@keyframes wave-bar {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.voice-wave-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-spark);
+  transform-origin: bottom;
+  animation: wave-bar 0.8s ease-in-out infinite;
+}
+
+.voice-wave-collapse {
+  transition: opacity 0.3s ease, width 0.3s ease, margin 0.3s ease;
+}
+
+.voice-wave-collapse.collapsed {
+  opacity: 0;
+  width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
