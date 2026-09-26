@@ -257,10 +257,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ── Return 200 immediately, process asynchronously ──
-  processMessageAsync(body).catch((err) => {
-    console.error("WhatsApp async processing error:", err);
-  });
+  // ── Process message completely within Meta's 20-second timeout window ──
+  try {
+    await processMessageAsync(body);
+  } catch (err) {
+    console.error("WhatsApp message processing error:", err);
+  }
 
   return NextResponse.json({ ok: true });
 }
