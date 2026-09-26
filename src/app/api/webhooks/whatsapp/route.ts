@@ -145,64 +145,36 @@ async function findSenderMember(
   return member?.id ?? null;
 }
 
-function buildConfirmationMessage(
-  entryType: string,
-  details: {
-    productName: string;
-    quantity: number;
-    unit: string;
-    amount: number;
-  },
-): string {
-  const nf = new Intl.NumberFormat("en-NG", {
-    style: "currency",
-    currency: "NGN",
-    minimumFractionDigits: 0,
-  });
+/**
+ * Reply to user via WhatsApp AND log outbound reply to dashboard messages table.
+ */
+async function replyToUser(
+  supabase: ReturnType<typeof createAdminClient>,
+  tenantId: number,
+  fromPhone: string,
+  replyText: string,
+  senderMemberId?: number | null,
+) {
+  // 1. Attempt WhatsApp Cloud API transmission
+  const sendRes = await sendTextMessage(fromPhone, replyText);
 
-  switch (entryType) {
-    case "sale":
-      return `Got it! Sold ${details.quantity} ${details.unit} of ${details.productName} (${nf.format(details.amount)})`;
-    case "expense":
-      return `Recorded expense: ${details.productName} — ${nf.format(details.amount)}`;
-    case "stock_in":
-      return `Stock added: +${details.quantity} ${details.unit} of ${details.productName}`;
-    default:
-      return `Entry logged: ${details.productName}`;
-  }
-}
-
-/** Check if a text reply is an affirmative response (yes-like) */
-function isAffirmative(text: string): boolean {
-  const lower = text.toLowerCase().trim();
-  const affirmatives = [
-    "yes", "yeah", "yep", "ya", "sure", "ok", "okay", "k",
-    "add it", "add", "go ahead", "do it", "proceed",
-  ];
-  return affirmatives.some((a) => lower === a || lower.startsWith(a));
-}
-
-/** Check if a text reply is a negative response (no-like) */
-function isNegative(text: string): boolean {
-  const lower = text.toLowerCase().trim();
-  const negatives = [
-    "no", "nah", "nope", "skip", "cancel", "ignore", "don't", "dont", "leave it",
-  ];
-  return negatives.some((n) => lower === n || lower.startsWith(n));
-}
-
-/** Parse the pending new-product confirmation context stored in failure_reason */
-function parsePendingContext(failureReason: string | null): { newProductName: string } | null {
-  if (!failureReason) return null;
+  // 2. Always persist outbound message so it displays in the dashboard thread
   try {
-    const parsed = JSON.parse(failureReason);
-    if (parsed.action === "confirm_new_product" && parsed.new_product_name) {
-      return { newProductName: parsed.new_product_name };
-    }
-    return null;
-  } catch {
-    return null;
+    await supabase.from("whatsapp_messages").insert({
+      tenant_id: tenantId,
+      wa_message_id: `reply_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      direction: "outbound",
+      type: "text",
+      raw_text: replyText,
+      status: "matched",
+      failure_reason: sendRes.success ? null : (sendRes.error ?? "outbound_delivery_pending"),
+      sender_member_id: senderMemberId ?? null,
+    });
+  } catch (err) {
+    console.error("Failed to store outbound message:", err);
   }
+
+  return sendRes;
 }
 
 interface WhatsAppWebhookPayload {
@@ -215,6 +187,7 @@ interface WhatsAppWebhookPayload {
           type: string;
           text?: { body: string };
           voice?: { id: string };
+          audio?: { id: string; mime_type?: string; voice?: boolean };
         }>;
         metadata?: {
           display_phone_number: string;
@@ -268,8 +241,7 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Full async message processing — runs after 200 is returned.
- * This prevents Meta webhook retries due to slow AI/API calls.
+ * Full async message processing.
  */
 async function processMessageAsync(body: WhatsAppWebhookPayload) {
   const supabase = createAdminClient();
@@ -287,16 +259,18 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   const toPhone = metadata.display_phone_number;
   const msgType = message.type;
 
-  // ── Determine text content ──
+  // ── Determine text or audio content ──
   let rawText: string | null = null;
   let isVoice = false;
   let voiceTranscript: string | null = null;
   let voiceMediaUrl: string | null = null;
+  let mediaId: string | null = null;
 
   if (msgType === "text") {
     rawText = message.text?.body ?? null;
-  } else if (msgType === "voice") {
-    const mediaId = message.voice?.id;
+  } else if (msgType === "audio" || msgType === "voice") {
+    // Meta WhatsApp Cloud API delivers voice notes under type: "audio" with message.audio.id
+    mediaId = message.audio?.id ?? message.voice?.id ?? null;
     if (!mediaId) return;
     isVoice = true;
   } else {
@@ -376,13 +350,12 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     await sendTemplateMessage(fromPhone, "plan_limit_exceeded");
     const upgradeMsg = planLimitExceededMessage(billing?.planTier ?? "free");
-    await sendTextMessage(fromPhone, upgradeMsg);
+    await replyToUser(supabase, tenant.id, fromPhone, upgradeMsg, senderMemberId);
     return;
   }
 
-  // ── 3. VOICE: download → upload → transcribe ──
+  // ── 3. VOICE: download → upload to Storage → transcribe with Whisper ──
   if (isVoice) {
-    const mediaId = message.voice?.id;
     if (!mediaId) return;
     try {
       const result = await processVoiceMessage(
@@ -405,9 +378,12 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           media_url: voiceMediaUrl,
           sender_member_id: senderMemberId,
         });
-        await sendTextMessage(
+        await replyToUser(
+          supabase,
+          tenant.id,
           fromPhone,
-          "I couldn't make out the audio clearly. Could you type your message instead?",
+          "I couldn't make out the audio clearly. Could you send a clearer voice note or type your message?",
+          senderMemberId,
         );
         return;
       }
@@ -423,9 +399,12 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           status: "failed",
           sender_member_id: senderMemberId,
         });
-        await sendTextMessage(
+        await replyToUser(
+          supabase,
+          tenant.id,
           fromPhone,
           "Your voice note is a bit too long for me to process. Please send a shorter note or type your message instead.",
+          senderMemberId,
         );
         return;
       }
@@ -439,106 +418,18 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         status: "failed",
         sender_member_id: senderMemberId,
       });
-      await sendTextMessage(
+      await replyToUser(
+        supabase,
+        tenant.id,
         fromPhone,
         "Sorry, I ran into trouble processing your voice note. Please type your message and I'll handle it right away.",
+        senderMemberId,
       );
       return;
     }
   }
 
-  // ── 4. CHECK FOR PENDING CONFIRMATION ──
-  if (!isVoice && rawText) {
-    const { data: pendingMsgs } = await supabase
-      .from("whatsapp_messages")
-      .select("id, raw_text, failure_reason, created_at")
-      .eq("tenant_id", tenant.id)
-      .eq("status", "pending_confirmation")
-      .eq("direction", "inbound")
-      .order("created_at", { ascending: false })
-      .limit(5);
-
-    if (pendingMsgs && pendingMsgs.length > 0) {
-      for (const pending of pendingMsgs) {
-        const context = parsePendingContext(pending.failure_reason);
-        if (context) {
-          if (isAffirmative(rawText)) {
-            const trimmedName = context.newProductName.trim();
-            const { checkProductLimit: cpl } = await import("@/lib/billing-server");
-            const productLimit = await cpl(tenant.id);
-            if (!productLimit.allowed) {
-              await sendTextMessage(
-                fromPhone,
-                `Can't add "${trimmedName}" — you've reached your product limit (${productLimit.currentCount}/${productLimit.maxProducts}). Upgrade your plan to add more.`,
-              );
-            } else {
-              const { error: createErr } = await supabase
-                .from("products")
-                .insert({
-                  tenant_id: tenant.id,
-                  name: trimmedName,
-                  quantity: 0,
-                  unit: "pcs",
-                })
-                .select("id, name")
-                .single();
-
-              if (createErr) {
-                await sendTextMessage(
-                  fromPhone,
-                  `Couldn't add "${trimmedName}" — something went wrong. Try adding it from your dashboard.`,
-                );
-              } else {
-                await sendTextMessage(
-                  fromPhone,
-                  `Added "${trimmedName}" to your catalog. You can now use it in your entries.`,
-                );
-              }
-            }
-
-            await supabase
-              .from("whatsapp_messages")
-              .update({ status: "matched", failure_reason: null })
-              .eq("id", pending.id);
-
-            await supabase.from("whatsapp_messages").insert({
-              tenant_id: tenant.id,
-              wa_message_id: waMessageId,
-              direction: "inbound",
-              type: "text",
-              raw_text: rawText,
-              status: "matched",
-              sender_member_id: senderMemberId,
-            });
-
-            await incrementMessageCount(tenant.id);
-            return;
-          } else if (isNegative(rawText)) {
-            await supabase
-              .from("whatsapp_messages")
-              .update({ status: "unmatched", failure_reason: null })
-              .eq("id", pending.id);
-
-            await supabase.from("whatsapp_messages").insert({
-              tenant_id: tenant.id,
-              wa_message_id: waMessageId,
-              direction: "inbound",
-              type: "text",
-              raw_text: rawText,
-              status: "unmatched",
-              sender_member_id: senderMemberId,
-            });
-
-            await sendTextMessage(fromPhone, "OK, skipping that one.");
-            return;
-          }
-          break; // only handle the first pending context
-        }
-      }
-    }
-  }
-
-  // ── 5. INSERT INBOUND MESSAGE ──
+  // ── 4. INSERT INBOUND MESSAGE ──
   const { data: waMsg, error: insertError } = await supabase
     .from("whatsapp_messages")
     .insert({
@@ -560,7 +451,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
-  // ── 6. FETCH PRODUCT CATALOG ──
+  // ── 5. FETCH PRODUCT CATALOG ──
   const { data: catalog } = await supabase
     .from("products")
     .select("id, name, unit, unit_cost, categories(name)")
@@ -578,7 +469,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     };
   });
 
-  // ── 7. PARSE WITH DEEPSEEK ──
+  // ── 6. PARSE WITH DEEPSEEK ──
   let parsed;
   try {
     parsed = await parseMessage(rawText!, catalogItems);
@@ -588,6 +479,13 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .from("whatsapp_messages")
       .update({ status: "failed" })
       .eq("id", waMsg.id);
+    await replyToUser(
+      supabase,
+      tenant.id,
+      fromPhone,
+      "Sorry, I had trouble parsing that. Could you please rephrase?",
+      senderMemberId,
+    );
     return;
   }
 
@@ -596,48 +494,206 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   // Increment usage counter
   await incrementMessageCount(tenant.id);
 
-  // ── 8a. HIGH CONFIDENCE + NEW PRODUCT ──
-  if (
-    confidence >= 0.75 &&
-    entry_type !== "unclear" &&
-    parsed.is_new_product &&
-    parsed.new_product_name
-  ) {
-    const pendingContext = JSON.stringify({
-      action: "confirm_new_product",
-      new_product_name: parsed.new_product_name,
-    });
+  const nf = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 0,
+  });
+
+  // ── 7. EXECUTE ACTION BY ENTRY TYPE ──
+
+  // 7A: HELP OR GREETING
+  if (entry_type === "help") {
+    await supabase
+      .from("whatsapp_messages")
+      .update({ status: "matched" })
+      .eq("id", waMsg.id);
+
+    const helpReply =
+      `👋 Welcome to *SparkBooks AI*!\n` +
+      `Here is what you can record (text or voice note):\n\n` +
+      `💰 *Record Sale:* "Sold 3 Bone Straight wig for 100k each"\n` +
+      `💸 *Record Expense:* "Paid shop rent 50k" or "Bought fuel 5,000"\n` +
+      `📦 *Restock / Add Stock:* "Restocked 10 Bone Straight" or "I restocked 50 closures at 20k cost"\n` +
+      `🔍 *Check Stock:* "How many Bone Straight do I have left?" or "Check stock"\n` +
+      `📊 *Daily Summary:* "Today's summary" or "How much did I sell today?"`;
+
+    await replyToUser(supabase, tenant.id, fromPhone, helpReply, senderMemberId);
+    return;
+  }
+
+  // 7B: STOCK CHECK INQUIRY
+  if (entry_type === "stock_check") {
+    let reply = "";
+    if (parsed.matched_product_id) {
+      const { data: prod } = await supabase
+        .from("products")
+        .select("name, quantity, unit, unit_cost")
+        .eq("id", parsed.matched_product_id)
+        .single();
+
+      if (prod) {
+        reply = `📦 *Stock Check:*\nYou have *${prod.quantity} ${prod.unit}* of *${prod.name}* in stock.`;
+      } else {
+        reply = `Could not find that product in your catalog.`;
+      }
+    } else {
+      const { data: prods } = await supabase
+        .from("products")
+        .select("name, quantity, unit")
+        .eq("tenant_id", tenant.id)
+        .is("deleted_at", null)
+        .order("quantity", { ascending: true })
+        .limit(10);
+
+      if (prods && prods.length > 0) {
+        reply = `📦 *Current Stock Levels:*\n` + prods.map((p) => `• ${p.name}: *${p.quantity} ${p.unit}*`).join("\n");
+      } else {
+        reply = `You have no products in your catalog yet.`;
+      }
+    }
 
     await supabase
       .from("whatsapp_messages")
-      .update({
-        status: "pending_confirmation",
-        failure_reason: pendingContext,
-      })
+      .update({ status: "matched" })
       .eq("id", waMsg.id);
 
-    await sendTextMessage(
-      fromPhone,
-      `New item "${parsed.new_product_name}" — add this to your catalog? Reply yes or no.`,
-    );
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
   }
-  // ── 8b. HIGH CONFIDENCE + MATCHED PRODUCT ──
-  else if (
-    confidence >= 0.75 &&
-    entry_type !== "unclear" &&
-    parsed.matched_product_id
-  ) {
-    let linkedEntryId: number | null = null;
 
-    if (entry_type === "sale" || entry_type === "expense") {
+  // 7C: TODAY'S SALES / PROFIT SUMMARY
+  if (entry_type === "daily_summary") {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const { data: entries } = await supabase
+      .from("ledger_entries")
+      .select("type, amount")
+      .eq("tenant_id", tenant.id)
+      .gte("created_at", today.toISOString());
+
+    let totalSales = 0;
+    let totalExpenses = 0;
+    let salesCount = 0;
+
+    for (const e of entries ?? []) {
+      if (e.type === "sale") {
+        totalSales += Number(e.amount);
+        salesCount++;
+      } else if (e.type === "expense") {
+        totalExpenses += Number(e.amount);
+      }
+    }
+
+    const netProfit = totalSales - totalExpenses;
+    const summaryReply =
+      `📊 *Today's Summary:*\n` +
+      `• Total Sales: *${nf.format(totalSales)}* (${salesCount} transaction${salesCount === 1 ? "" : "s"})\n` +
+      `• Total Expenses: *${nf.format(totalExpenses)}*\n` +
+      `• Net Profit: *${nf.format(netProfit)}*`;
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({ status: "matched" })
+      .eq("id", waMsg.id);
+
+    await replyToUser(supabase, tenant.id, fromPhone, summaryReply, senderMemberId);
+    return;
+  }
+
+  // 7D: STOCK IN / INVENTORY ADDITION / RESTOCK
+  if (entry_type === "stock_in" && confidence >= 0.7) {
+    let productId = parsed.matched_product_id;
+    let productName = parsed.matched_product_name;
+    const qty = parsed.quantity ?? 0;
+    const unit = parsed.unit ?? "pcs";
+    const unitCost =
+      parsed.unit_cost ??
+      (parsed.amount && qty > 0 ? Math.round(parsed.amount / qty) : null);
+    const totalAmount =
+      parsed.amount ?? (qty > 0 && unitCost ? qty * unitCost : null);
+
+    // If new product (not in catalog yet), auto-create product with initial inventory
+    if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
+      const newName = (parsed.new_product_name || parsed.matched_product_name || "New Product").trim();
+      const { checkProductLimit } = await import("@/lib/billing-server");
+      const pLimit = await checkProductLimit(tenant.id);
+
+      if (!pLimit.allowed) {
+        const reply = `Can't add "${newName}" — you've reached your product limit (${pLimit.currentCount}/${pLimit.maxProducts}). Upgrade your plan to add more.`;
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      }
+
+      const { data: createdProduct, error: pErr } = await supabase
+        .from("products")
+        .insert({
+          tenant_id: tenant.id,
+          name: newName,
+          quantity: qty,
+          unit,
+          unit_cost: unitCost,
+        })
+        .select("id, name")
+        .single();
+
+      if (pErr || !createdProduct) {
+        console.error("Failed to auto-create product:", pErr);
+        const reply = `Could not create product "${newName}". Please try again or create it from the dashboard.`;
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      }
+
+      productId = createdProduct.id;
+      productName = createdProduct.name;
+
+      // Record initial stock movement
+      if (qty > 0) {
+        await supabase.from("stock_movements").insert({
+          tenant_id: tenant.id,
+          product_id: productId,
+          change_qty: qty,
+          type: "in",
+          source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+          reason: "Initial stock via WhatsApp",
+          linked_message_id: waMsg.id,
+        });
+      }
+    } else if (productId) {
+      // Existing product restock
+      if (qty > 0) {
+        await updateProductStock({
+          supabase,
+          tenantId: tenant.id,
+          productId,
+          changeQty: qty,
+          type: "in",
+          source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+          linkedMessageId: waMsg.id,
+          alertPhone: fromPhone,
+          reason: "Restocked via WhatsApp",
+        });
+      }
+      if (unitCost != null) {
+        await supabase
+          .from("products")
+          .update({ unit_cost: unitCost })
+          .eq("id", productId);
+      }
+    }
+
+    // If purchase cost was stated or computed, record an expense in the ledger
+    let ledgerId: number | null = null;
+    if (totalAmount && totalAmount > 0) {
       const { data: ledger } = await supabase
         .from("ledger_entries")
         .insert({
           tenant_id: tenant.id,
-          type: entry_type,
-          amount: parsed.amount ?? 0,
-          item_description: parsed.matched_product_name ?? "Unknown item",
-          product_id: parsed.matched_product_id,
+          type: "expense",
+          amount: totalAmount,
+          item_description: `Inventory restock: ${qty} ${unit} of ${productName}`,
+          product_id: productId,
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linked_message_id: waMsg.id,
           confidence_score: confidence,
@@ -645,57 +701,145 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         .select("id")
         .single();
 
-      linkedEntryId = ledger?.id ?? null;
-    }
-
-    if (entry_type === "stock_in" || entry_type === "sale") {
-      const changeQty =
-        entry_type === "sale"
-          ? -(parsed.quantity ?? 0)
-          : parsed.quantity ?? 0;
-
-      const movementId = await updateProductStock({
-        supabase,
-        tenantId: tenant.id,
-        productId: parsed.matched_product_id,
-        changeQty,
-        type: entry_type === "sale" ? "out" : "in",
-        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
-        linkedMessageId: waMsg.id,
-        alertPhone: fromPhone,
-      });
-
-      if (!linkedEntryId && movementId) linkedEntryId = movementId;
+      ledgerId = ledger?.id ?? null;
     }
 
     await supabase
       .from("whatsapp_messages")
       .update({
         status: "matched",
-        linked_entry_id: linkedEntryId,
+        linked_entry_id: ledgerId,
       })
       .eq("id", waMsg.id);
 
-    const confirmMsg = buildConfirmationMessage(entry_type, {
-      productName: parsed.matched_product_name ?? "item",
-      quantity: parsed.quantity ?? 0,
-      unit: parsed.unit ?? "pcs",
-      amount: parsed.amount ?? 0,
-    });
+    let reply = `📦 *Stock Added:* +${qty} ${unit} of *${productName}*.`;
+    if (totalAmount && totalAmount > 0) {
+      reply += ` Recorded purchase cost of *${nf.format(totalAmount)}*.`;
+    }
 
-    await sendTextMessage(fromPhone, confirmMsg);
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
   }
-  // ── 8c. LOW CONFIDENCE OR UNCLEAR ──
-  else {
-    if (parsed.clarification_needed) {
-      await sendTextMessage(fromPhone, parsed.clarification_needed);
-    } else {
-      await sendTemplateMessage(fromPhone, "entry_unclear_fallback");
+
+  // 7E: GENERAL BUSINESS EXPENSE
+  if (entry_type === "expense" && confidence >= 0.75 && parsed.amount && parsed.amount > 0) {
+    const desc =
+      parsed.matched_product_name ||
+      parsed.new_product_name ||
+      "General business expense";
+
+    const { data: ledger } = await supabase
+      .from("ledger_entries")
+      .insert({
+        tenant_id: tenant.id,
+        type: "expense",
+        amount: parsed.amount,
+        item_description: desc,
+        product_id: parsed.matched_product_id ?? null,
+        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+        linked_message_id: waMsg.id,
+        confidence_score: confidence,
+      })
+      .select("id")
+      .single();
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({
+        status: "matched",
+        linked_entry_id: ledger?.id ?? null,
+      })
+      .eq("id", waMsg.id);
+
+    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(parsed.amount)}*`;
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
+  // 7F: RECORD SALE
+  if (entry_type === "sale" && confidence >= 0.75) {
+    let productId = parsed.matched_product_id;
+    let productName = parsed.matched_product_name;
+    const qty = parsed.quantity ?? 1;
+    const unit = parsed.unit ?? "pcs";
+    const amount = parsed.amount ?? 0;
+
+    // If new item not in catalog yet, auto-create it
+    if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
+      const newName = (parsed.new_product_name || "New Item").trim();
+      const { checkProductLimit } = await import("@/lib/billing-server");
+      const pLimit = await checkProductLimit(tenant.id);
+
+      if (pLimit.allowed) {
+        const { data: createdProduct } = await supabase
+          .from("products")
+          .insert({
+            tenant_id: tenant.id,
+            name: newName,
+            quantity: 0,
+            unit,
+          })
+          .select("id, name")
+          .single();
+
+        if (createdProduct) {
+          productId = createdProduct.id;
+          productName = createdProduct.name;
+        }
+      }
+    }
+
+    const { data: ledger } = await supabase
+      .from("ledger_entries")
+      .insert({
+        tenant_id: tenant.id,
+        type: "sale",
+        amount,
+        item_description: productName ? `Sold ${qty} ${unit} of ${productName}` : "Sale",
+        product_id: productId,
+        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+        linked_message_id: waMsg.id,
+        confidence_score: confidence,
+      })
+      .select("id")
+      .single();
+
+    if (productId && qty > 0) {
+      await updateProductStock({
+        supabase,
+        tenantId: tenant.id,
+        productId,
+        changeQty: -qty,
+        type: "out",
+        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+        linkedMessageId: waMsg.id,
+        alertPhone: fromPhone,
+        reason: "Sale via WhatsApp",
+      });
     }
 
     await supabase
       .from("whatsapp_messages")
-      .update({ status: "pending_confirmation" })
+      .update({
+        status: "matched",
+        linked_entry_id: ledger?.id ?? null,
+      })
       .eq("id", waMsg.id);
+
+    const reply = `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*)`;
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
   }
+
+  // 7G: LOW CONFIDENCE OR UNCLEAR FALLBACK
+  await supabase
+    .from("whatsapp_messages")
+    .update({ status: "pending_confirmation" })
+    .eq("id", waMsg.id);
+
+  const fallbackMsg =
+    parsed.clarification_needed ||
+    "Sorry, I couldn't understand that. Could you please rephrase or specify product and amount?";
+
+  await replyToUser(supabase, tenant.id, fromPhone, fallbackMsg, senderMemberId);
 }

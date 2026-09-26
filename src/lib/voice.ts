@@ -128,6 +128,10 @@ export async function transcribeAudio(
   formData.append("file", blob, `audio.${ext}`);
   formData.append("model", OPENAI_TRANSCRIPTION_MODEL);
   formData.append("language", "en");
+  formData.append(
+    "prompt",
+    "Nigerian small business bookkeeping: sales, expenses, restock, naira, wigs, closures, stock, quantity, pieces, price, sold",
+  );
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
