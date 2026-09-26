@@ -579,29 +579,51 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     const { data: entries } = await supabase
       .from("ledger_entries")
-      .select("type, amount")
+      .select("type, amount, item_description, created_at")
       .eq("tenant_id", tenant.id)
-      .gte("created_at", today.toISOString());
+      .gte("created_at", today.toISOString())
+      .order("created_at", { ascending: true });
 
     let totalSales = 0;
     let totalExpenses = 0;
-    let salesCount = 0;
+    const salesList: string[] = [];
+    const expenseList: string[] = [];
 
     for (const e of entries ?? []) {
+      const amt = Number(e.amount);
       if (e.type === "sale") {
-        totalSales += Number(e.amount);
-        salesCount++;
+        totalSales += amt;
+        salesList.push(`• ${e.item_description || "Sale"} — *${nf.format(amt)}*`);
       } else if (e.type === "expense") {
-        totalExpenses += Number(e.amount);
+        totalExpenses += amt;
+        expenseList.push(`• ${e.item_description || "Expense"} — *${nf.format(amt)}*`);
       }
     }
 
     const netProfit = totalSales - totalExpenses;
-    const summaryReply =
-      `📊 *Today's Summary:*\n` +
-      `• Total Sales: *${nf.format(totalSales)}* (${salesCount} transaction${salesCount === 1 ? "" : "s"})\n` +
-      `• Total Expenses: *${nf.format(totalExpenses)}*\n` +
-      `• Net Profit: *${nf.format(netProfit)}*`;
+    const profitEmoji = netProfit >= 0 ? "📈" : "📉";
+    const profitSign = netProfit >= 0 ? "+" : "";
+
+    let summaryReply = `📊 *Today's Breakdown & P&L:*\n\n`;
+
+    summaryReply += `💰 *Sales Breakdown (${nf.format(totalSales)}):*\n`;
+    if (salesList.length > 0) {
+      summaryReply += salesList.join("\n") + "\n\n";
+    } else {
+      summaryReply += `• No sales recorded today\n\n`;
+    }
+
+    summaryReply += `💸 *Expenses & Purchases (${nf.format(totalExpenses)}):\n`;
+    if (expenseList.length > 0) {
+      summaryReply += expenseList.join("\n") + "\n\n";
+    } else {
+      summaryReply += `• No expenses recorded today\n\n`;
+    }
+
+    summaryReply += `${profitEmoji} *Profit & Loss (P&L):*\n`;
+    summaryReply += `• Total Sales: *${nf.format(totalSales)}* (${salesList.length} transaction${salesList.length === 1 ? "" : "s"})\n`;
+    summaryReply += `• Total Expenses: *${nf.format(totalExpenses)}*\n`;
+    summaryReply += `• Net Profit / Loss: *${profitSign}${nf.format(netProfit)}*`;
 
     await supabase
       .from("whatsapp_messages")

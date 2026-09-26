@@ -155,8 +155,10 @@ export async function fetchLinkedEntries(
     for (const m of movements) {
       const msgId = m.linked_message_id;
       if (!result[msgId]) result[msgId] = [];
-      const productName =
-        (m.products as unknown as { name: string }[])?.[0]?.name ?? "Unknown";
+      const prod = m.products as unknown as { name: string } | { name: string }[] | null;
+      const productName = Array.isArray(prod)
+        ? prod[0]?.name ?? "Product"
+        : prod?.name ?? "Product";
       result[msgId].push({
         id: m.id,
         type: m.type === "in" ? "stock_in" : "stock_out",
