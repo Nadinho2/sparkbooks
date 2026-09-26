@@ -3,6 +3,7 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getCurrentTenant } from "@/lib/tenant-server";
 import { SignOutButton } from "@/components/ui/SignOutButton";
 import { getWhatsAppBotUrl } from "@/lib/whatsapp";
+import { DashboardNav } from "@/components/dashboard/DashboardNav";
 
 export default async function DashboardLayout({
   children,
@@ -67,20 +68,8 @@ export default async function DashboardLayout({
           </div>
         </div>
 
-        {/* Nav links — scrollable on mobile */}
-        <nav className="flex items-center border-t border-rule/50 bg-white/80">
-          <div className="max-w-5xl lg:max-w-6xl mx-auto w-full px-4 sm:px-6 flex gap-1 sm:gap-1.5 overflow-x-auto scrollbar-hide py-1">
-            {links.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="shrink-0 px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-ink-muted hover:text-ink hover:bg-paper/60 transition-colors rounded-md"
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-        </nav>
+        {/* Nav links with active route indicator */}
+        <DashboardNav links={links} />
       </header>
       <main className="flex-1 max-w-5xl lg:max-w-6xl mx-auto w-full px-4 sm:px-6 py-5 sm:py-8">
         {children}

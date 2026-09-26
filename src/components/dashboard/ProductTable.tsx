@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { formatNaira } from "@/lib/format";
 import { EditProductModal } from "./EditProductModal";
 import { ProductDetailModal } from "./ProductDetailModal";
@@ -44,6 +44,38 @@ export function ProductTable({
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
   const [showCategories, setShowCategories] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
+
+  const totalCatalogValue = useMemo(() => {
+    return products.reduce((acc, p) => acc + (p.totalValue || 0), 0);
+  }, [products]);
+
+  const totalUnitsSold = useMemo(() => {
+    return products.reduce((acc, p) => acc + (p.totalSold || 0), 0);
+  }, [products]);
+
+  const totalSalesRevenue = useMemo(() => {
+    return products.reduce((acc, p) => acc + (p.totalRevenue || 0), 0);
+  }, [products]);
+
+  const lowStockCount = useMemo(() => {
+    return products.filter((p) => p.isLowStock).length;
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      if (selectedCategory !== "all" && p.categoryId !== selectedCategory) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          p.name.toLowerCase().includes(q) ||
+          (p.categoryName && p.categoryName.toLowerCase().includes(q))
+        );
+      }
+      return true;
+    });
+  }, [products, selectedCategory, searchQuery]);
 
   const handleDelete = useCallback(async () => {
     if (!deleting) return;
@@ -54,86 +86,283 @@ export function ProductTable({
 
   return (
     <>
-      <div className="flex items-center justify-between mb-4">
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="font-display text-xl text-ink">Products</h1>
-          <p className="text-xs text-ink-muted hidden sm:block mt-0.5">
-            Click on any product to see units sold, price sold per item, and purchase costs.
+          <h1 className="font-display text-2xl text-ink font-bold tracking-tight">Products & Inventory</h1>
+          <p className="text-xs text-ink-muted mt-0.5">
+            Real-time catalog valuation, stock levels, and item-by-item sales breakdown.
           </p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <button
-            onClick={() => setAdding(true)}
-            className="inline-flex items-center h-9 rounded-full bg-ink px-3 sm:px-4 text-xs sm:text-sm font-medium text-white hover:opacity-90 transition-opacity"
+            onClick={() => setShowCategories(!showCategories)}
+            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-rule bg-white text-xs font-medium text-ink hover:bg-sand-light transition-all shadow-xs"
           >
-            <span className="sm:hidden mr-1">+</span>
-            <span className="hidden sm:inline">+ Add product</span>
+            <span>🏷️</span>
+            <span>{showCategories ? "Close Categories" : "Manage Categories"}</span>
           </button>
           <button
-            onClick={() => setShowCategories(!showCategories)}
-            className="text-xs sm:text-sm text-ink-muted hover:text-ink transition-colors"
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-1.5 h-9 rounded-xl bg-ink px-4 text-xs font-semibold text-white hover:opacity-90 transition-all shadow-xs"
           >
-            {showCategories ? "Close" : "Categories"}
+            <span>+</span>
+            <span>Add Product</span>
           </button>
         </div>
       </div>
 
       {showCategories && (
-        <CategoryManager tenantId={tenantId} categories={categories} />
+        <div className="mb-6">
+          <CategoryManager tenantId={tenantId} categories={categories} />
+        </div>
       )}
 
+      {/* Catalog KPI Overview Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+        {/* 1. Inventory Value */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 flex flex-col justify-between shadow-xs hover:border-slate-300 transition-colors">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+              Stock Valuation
+            </span>
+            <span className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs">
+              💰
+            </span>
+          </div>
+          <div className="my-1">
+            <span className="font-mono text-lg sm:text-xl font-bold text-ink">
+              {formatNaira(totalCatalogValue)}
+            </span>
+          </div>
+          <span className="text-[11px] text-ink-muted">
+            Total working capital in warehouse
+          </span>
+        </div>
+
+        {/* 2. Total Products */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 flex flex-col justify-between shadow-xs hover:border-slate-300 transition-colors">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+              Active Catalog
+            </span>
+            <span className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center text-xs">
+              📦
+            </span>
+          </div>
+          <div className="my-1 flex items-baseline gap-1">
+            <span className="font-mono text-lg sm:text-xl font-bold text-ink">
+              {products.length}
+            </span>
+            <span className="text-xs text-ink-muted">products</span>
+          </div>
+          <span className="text-[11px] text-ink-muted">
+            Across {categories.length} {categories.length === 1 ? "category" : "categories"}
+          </span>
+        </div>
+
+        {/* 3. Items Sold */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 flex flex-col justify-between shadow-xs hover:border-slate-300 transition-colors">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+              Total Units Sold
+            </span>
+            <span className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xs">
+              🛍️
+            </span>
+          </div>
+          <div className="my-1 flex items-baseline gap-1">
+            <span className="font-mono text-lg sm:text-xl font-bold text-ink">
+              {totalUnitsSold}
+            </span>
+            <span className="text-xs text-ink-muted">units</span>
+          </div>
+          <span className="text-[11px] text-ink-muted">
+            {totalSalesRevenue > 0
+              ? `${formatNaira(totalSalesRevenue)} gross revenue`
+              : "Awaiting sales"}
+          </span>
+        </div>
+
+        {/* 4. Stock Health / Alerts */}
+        <div
+          className={`border rounded-2xl p-4 flex flex-col justify-between shadow-xs transition-colors ${
+            lowStockCount > 0
+              ? "bg-amber-50/40 border-amber-300/80"
+              : "bg-white border-slate-200/90"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span
+              className={`text-[11px] font-semibold uppercase tracking-wider ${
+                lowStockCount > 0 ? "text-amber-800" : "text-ink-muted"
+              }`}
+            >
+              Stock Health
+            </span>
+            <span
+              className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs ${
+                lowStockCount > 0
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-emerald-50 text-emerald-600"
+              }`}
+            >
+              {lowStockCount > 0 ? "⚠️" : "✓"}
+            </span>
+          </div>
+          <div className="my-1 flex items-baseline gap-1.5">
+            <span
+              className={`font-mono text-lg sm:text-xl font-bold ${
+                lowStockCount > 0 ? "text-amber-700" : "text-emerald-700"
+              }`}
+            >
+              {lowStockCount > 0 ? `${lowStockCount} Low Stock` : "All Healthy"}
+            </span>
+          </div>
+          <span
+            className={`text-[11px] ${
+              lowStockCount > 0 ? "text-amber-800 font-medium" : "text-ink-muted"
+            }`}
+          >
+            {lowStockCount > 0
+              ? "Reorder alert triggered"
+              : "All products above threshold"}
+          </span>
+        </div>
+      </div>
+
+      {/* Filter & Search Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        {/* Search input */}
+        <div className="relative flex-1 max-w-sm">
+          <svg
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+            />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search products..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-8 py-2 text-xs rounded-xl border border-rule bg-white text-ink placeholder:text-ink-muted/70 focus:outline-hidden focus:border-ink transition-colors shadow-2xs"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink text-xs p-1"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* Category Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-1">
+          <button
+            onClick={() => setSelectedCategory("all")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium shrink-0 transition-all ${
+              selectedCategory === "all"
+                ? "bg-ink text-white font-semibold shadow-2xs"
+                : "bg-white border border-rule text-ink-muted hover:text-ink"
+            }`}
+          >
+            All ({products.length})
+          </button>
+          {categories.map((c) => {
+            const count = products.filter((p) => p.categoryId === c.id).length;
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCategory(c.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium shrink-0 transition-all ${
+                  selectedCategory === c.id
+                    ? "bg-ink text-white font-semibold shadow-2xs"
+                    : "bg-white border border-rule text-ink-muted hover:text-ink"
+                }`}
+              >
+                {c.name} ({count})
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Desktop table */}
-      <div className="hidden sm:block bg-white rounded-xl overflow-hidden border border-rule">
+      <div className="hidden sm:block bg-white rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-rule text-left text-xs text-ink-muted bg-sand/30">
-                <th className="py-3 px-4 font-normal">Product</th>
-                <th className="py-3 px-4 font-normal">Category</th>
-                <th className="py-3 px-4 font-normal text-right">Sold</th>
-                <th className="py-3 px-4 font-normal text-right">On hand</th>
-                <th className="py-3 px-4 font-normal text-right">Price bought</th>
-                <th className="py-3 px-4 font-normal text-right">Total value</th>
-                <th className="py-3 px-4 font-normal">Last restocked</th>
-                <th className="py-3 px-4 font-normal text-right w-28">Actions</th>
+              <tr className="border-b border-slate-200/80 text-left text-slate-500 bg-slate-50/80 font-medium">
+                <th className="py-3 px-4">Product Name</th>
+                <th className="py-3 px-4">Category</th>
+                <th className="py-3 px-4 text-right">Sold To Date</th>
+                <th className="py-3 px-4 text-right">On Hand</th>
+                <th className="py-3 px-4 text-right">Price Bought</th>
+                <th className="py-3 px-4 text-right">Stock Value</th>
+                <th className="py-3 px-4">Last Restocked</th>
+                <th className="py-3 px-4 text-right w-28">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {products.length === 0 && (
+            <tbody className="divide-y divide-slate-100">
+              {filteredProducts.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-ink-muted text-sm">
-                    No products yet. Add products during onboarding or via the dashboard.
+                  <td colSpan={8} className="py-12 text-center text-ink-muted text-xs">
+                    {searchQuery || selectedCategory !== "all" ? (
+                      <div className="space-y-1">
+                        <p className="font-medium text-ink">No matching products found</p>
+                        <p className="text-ink-muted">Try clearing your search query or category filter.</p>
+                      </div>
+                    ) : (
+                      "No products yet. Add products during onboarding or click Add Product above."
+                    )}
                   </td>
                 </tr>
               )}
-              {products.map((p) => (
+              {filteredProducts.map((p) => (
                 <tr
                   key={p.id}
                   onClick={() => setSelectedDetail(p)}
-                  className={`border-b border-rule/50 hover:bg-sand-light/60 transition-colors cursor-pointer group ${
-                    p.isLowStock ? "bg-flag-light/40" : ""
+                  className={`hover:bg-slate-50/80 transition-colors cursor-pointer group ${
+                    p.isLowStock ? "bg-amber-50/30" : ""
                   }`}
                   title="Click to view sales and price analytics"
                 >
-                  <td className="py-3 px-4">
+                  <td className="py-3.5 px-4">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-ink font-medium group-hover:underline">
+                      <span className="text-ink font-semibold group-hover:text-ink transition-colors">
                         {p.name}
                       </span>
-                      <span className="text-[11px] text-ink-muted group-hover:text-ink transition-colors">
+                      <span className="text-[11px] text-ink-muted/70 group-hover:text-ink transition-colors">
                         ↗
                       </span>
                     </div>
                   </td>
-                  <td className="py-3 px-4 text-ink-muted">{p.categoryName ?? "—"}</td>
-                  <td className="py-3 px-4 text-right">
+                  <td className="py-3.5 px-4">
+                    {p.categoryName ? (
+                      <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-sand/60 border border-rule/60 text-ink-muted">
+                        {p.categoryName}
+                      </span>
+                    ) : (
+                      <span className="text-ink-muted">—</span>
+                    )}
+                  </td>
+                  <td className="py-3.5 px-4 text-right">
                     {p.totalSold != null && p.totalSold > 0 ? (
                       <div>
-                        <span className="font-mono text-ink font-medium">
+                        <span className="font-mono text-ink font-semibold">
                           {p.totalSold} {p.unit}
                         </span>
                         {p.totalRevenue != null && p.totalRevenue > 0 && (
-                          <span className="block text-[11px] text-money font-medium">
+                          <span className="block text-[10px] text-emerald-700 font-medium">
                             {formatNaira(p.totalRevenue)}
                           </span>
                         )}
@@ -142,30 +371,37 @@ export function ProductTable({
                       <span className="text-ink-muted text-xs">0 sold</span>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-right">
-                    <span className={`font-mono ${p.isLowStock ? "text-flag font-medium" : "text-ink"}`}>
-                      {p.quantity}
-                      {p.isLowStock && (
-                        <span className="ml-1 text-[10px] text-flag">▼{p.reorderThreshold}</span>
-                      )}
-                    </span>
-                    <span className="text-ink-muted ml-1 text-xs">{p.unit}</span>
+                  <td className="py-3.5 px-4 text-right">
+                    {p.isLowStock ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                        {p.quantity} {p.unit}
+                      </span>
+                    ) : p.quantity === 0 ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                        Out of stock
+                      </span>
+                    ) : (
+                      <span className="font-mono text-ink font-medium">
+                        {p.quantity} <span className="text-ink-muted text-[11px]">{p.unit}</span>
+                      </span>
+                    )}
                   </td>
-                  <td className="py-3 px-4 text-right font-mono text-ink-muted">
+                  <td className="py-3.5 px-4 text-right font-mono text-ink-muted">
                     {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
                   </td>
-                  <td className="py-3 px-4 text-right font-mono text-ink">
+                  <td className="py-3.5 px-4 text-right font-mono font-medium text-ink">
                     {formatNaira(p.totalValue)}
                   </td>
-                  <td className="py-3 px-4 text-ink-muted text-xs">{p.lastRestocked ?? "—"}</td>
-                  <td className="py-3 px-4 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
+                  <td className="py-3.5 px-4 text-ink-muted text-xs">{p.lastRestocked ?? "—"}</td>
+                  <td className="py-3.5 px-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedDetail(p);
                         }}
-                        className="text-xs text-ink font-medium hover:underline px-1 py-0.5"
+                        className="text-xs text-ink font-semibold hover:underline"
                       >
                         Insights
                       </button>
@@ -174,7 +410,7 @@ export function ProductTable({
                           e.stopPropagation();
                           setEditing(p);
                         }}
-                        className="text-xs text-ink-muted hover:text-ink px-1 py-0.5"
+                        className="text-xs text-ink-muted hover:text-ink"
                       >
                         Edit
                       </button>
@@ -183,7 +419,7 @@ export function ProductTable({
                           e.stopPropagation();
                           setDeleting(p);
                         }}
-                        className="text-xs text-flag hover:opacity-80 px-1 py-0.5"
+                        className="text-xs text-rose-600 hover:text-rose-700"
                       >
                         Delete
                       </button>
@@ -198,12 +434,12 @@ export function ProductTable({
 
       {/* Mobile card view */}
       <div className="sm:hidden space-y-3">
-        {products.length === 0 && (
-          <div className="bg-white rounded-xl border border-rule py-12 text-center text-ink-muted text-sm">
-            No products yet.
+        {filteredProducts.length === 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 py-12 text-center text-ink-muted text-xs">
+            No products match your filter.
           </div>
         )}
-        {products.map((p) => (
+        {filteredProducts.map((p) => (
           <div
             key={p.id}
             onClick={() => setSelectedDetail(p)}
