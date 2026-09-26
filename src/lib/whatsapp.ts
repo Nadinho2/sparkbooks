@@ -155,3 +155,22 @@ export async function sendTemplateMessage(
     clearTimeout(timeout);
   }
 }
+
+/**
+ * The official SparkBooks WhatsApp Business bot number (international format without +).
+ */
+export const SPARKBOOKS_BOT_PHONE = "2349039291067";
+
+/**
+ * Generate a wa.me deep link with a prefilled message containing the business / brand name.
+ */
+export function getWhatsAppBotUrl(businessName?: string, customText?: string): string {
+  const brand = businessName?.trim();
+  const text =
+    customText ||
+    (brand
+      ? `Hi SparkBooks! 👋 I'm ready to start bookkeeping for ${brand}.`
+      : `Hi SparkBooks! 👋 I'm ready to start bookkeeping.`);
+  return `https://wa.me/${SPARKBOOKS_BOT_PHONE}?text=${encodeURIComponent(text)}`;
+}
+

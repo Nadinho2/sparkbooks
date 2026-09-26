@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getCurrentTenant } from "@/lib/tenant-server";
 import { SignOutButton } from "@/components/ui/SignOutButton";
+import { getWhatsAppBotUrl } from "@/lib/whatsapp";
 
 export default async function DashboardLayout({
   children,
@@ -50,7 +51,20 @@ export default async function DashboardLayout({
               )}
             </div>
           </div>
-          <SignOutButton />
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <a
+              href={getWhatsAppBotUrl(tenant.businessName)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-[#25D366]/10 text-[#128C7E] hover:bg-[#25D366]/20 text-xs font-semibold border border-[#25D366]/30 transition-all shadow-xs"
+              title="Open SparkBooks WhatsApp Bot"
+            >
+              <span className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
+              <span className="hidden sm:inline">WhatsApp Bot</span>
+              <span className="sm:hidden">Bot</span> ↗
+            </a>
+            <SignOutButton />
+          </div>
         </div>
 
         {/* Nav links — scrollable on mobile */}

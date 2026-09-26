@@ -519,14 +519,16 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .update({ status: "matched" })
       .eq("id", waMsg.id);
 
+    const brandGreeting = tenant.business_name ? ` *${tenant.business_name}*` : "";
     const helpReply =
-      `👋 Welcome to *SparkBooks AI*!\n` +
-      `Here is what you can record (text or voice note):\n\n` +
+      `👋 Welcome to *SparkBooks AI*,${brandGreeting}!\n` +
+      `I'm your 24/7 automated bookkeeper. Here is what you can send me (text or voice note):\n\n` +
       `💰 *Record Sale:* "Sold 3 Bone Straight wig for 100k each"\n` +
       `💸 *Record Expense:* "Paid shop rent 50k" or "Bought fuel 5,000"\n` +
-      `📦 *Restock / Add Stock:* "Restocked 10 Bone Straight" or "I restocked 50 closures at 20k cost"\n` +
-      `🔍 *Check Stock:* "How many Bone Straight do I have left?" or "Check stock"\n` +
-      `📊 *Daily Summary:* "Today's summary" or "How much did I sell today?"`;
+      `📦 *Restock / Add Stock:* "Restocked 50 closures at 20k cost"\n` +
+      `🔍 *Check Stock:* "How many Bone Straight do I have left?" or "Total inventory"\n` +
+      `📊 *Daily Summary:* "Today's summary" or "Show me my P&L"\n\n` +
+      `Go ahead and record your first transaction now! 🚀`;
 
     await replyToUser(supabase, tenant.id, fromPhone, helpReply, senderMemberId);
     return;

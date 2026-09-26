@@ -214,6 +214,7 @@ export default function OnboardingPage() {
       {step === "complete" && tenantInfo && (
         <CompletionStep
           whatsappNumber={tenantInfo.whatsappNumber}
+          businessName={tenantInfo.businessName}
           productCount={productCount}
         />
       )}
