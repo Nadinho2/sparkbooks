@@ -73,12 +73,14 @@ export async function getExistingTenant(): Promise<TenantData | null> {
         })
         .eq("id", pendingInvite.id);
 
-      const tenant = (pendingInvite as any).tenants as {
-        id: number;
-        business_name: string;
-        business_type: string;
-        whatsapp_number: string;
-      } | null;
+      const tenant = (pendingInvite as unknown as {
+        tenants: {
+          id: number;
+          business_name: string;
+          business_type: string;
+          whatsapp_number: string;
+        } | null;
+      }).tenants;
 
       if (tenant) {
         return {

@@ -25,8 +25,12 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SparkBooks",
-  description: "WhatsApp bookkeeping for Nigerian SME sellers",
+  title: "SparkBooks — AI WhatsApp Bookkeeping for Sellers",
+  description: "WhatsApp bookkeeping and automated ledger tracking for Nigerian SME sellers",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-icon.svg",
+  },
 };
 
 export default function RootLayout({

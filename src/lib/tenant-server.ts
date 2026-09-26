@@ -77,7 +77,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
     .maybeSingle();
 
   if (membership) {
-    const tenant = (membership as any).tenants as Record<string, unknown>;
+    const tenant = (membership as unknown as { tenants: Record<string, unknown> | null }).tenants;
     if (!tenant) redirect("/onboarding");
     if (tenant.is_suspended) redirect("/suspended");
     return mapTenantRow(tenant);
@@ -108,7 +108,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
         })
         .eq("id", pendingInvite.id);
 
-      const tenant = (pendingInvite as any).tenants as Record<string, unknown>;
+      const tenant = (pendingInvite as unknown as { tenants: Record<string, unknown> | null }).tenants;
       if (!tenant) redirect("/onboarding");
       if (tenant.is_suspended) redirect("/suspended");
       return mapTenantRow(tenant);

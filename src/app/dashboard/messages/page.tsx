@@ -1,7 +1,6 @@
 import { getCurrentTenant } from "@/lib/tenant-server";
 import { fetchMessages } from "./actions";
 import { ChatThread } from "@/components/dashboard/ChatThread";
-import { BackButton } from "@/components/ui/BackButton";
 
 export const metadata = {
   title: "Messages – SparkBooks",

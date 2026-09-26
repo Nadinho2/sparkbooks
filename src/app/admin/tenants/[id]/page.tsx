@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchTenantDetail } from "@/app/admin/actions";
 import { AdminTenantDetail } from "@/components/admin/TenantDetail";
@@ -18,12 +19,12 @@ export default async function AdminTenantDetailPage({
   return (
     <div>
       <div className="mb-5">
-        <a
+        <Link
           href="/admin/tenants"
           className="text-xs text-ink-muted hover:text-ink transition-colors"
         >
           &larr; Back to tenants
-        </a>
+        </Link>
         <h1 className="font-display text-xl text-ink mt-1">
           {tenant.businessName}
         </h1>

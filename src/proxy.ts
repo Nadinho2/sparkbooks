@@ -6,6 +6,10 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",               // local sign-up page
   "/onboarding",                // onboarding (auth checked at layout level)
   "/suspended",                 // suspended account page (auth checked at layout level)
+  "/terms",                     // Terms of Service (public / Meta compliance)
+  "/privacy",                   // Privacy Policy (public / Meta compliance)
+  "/refund",                    // Refund Policy (public / Paystack compliance)
+  "/deletion",                  // User Data Deletion Instructions (Meta compliance)
   "/api/webhooks/(.*)",         // WhatsApp & Paystack webhooks (HMAC-verified)
   "/api/cron/(.*)",             // Cron jobs (bearer-token verified)
 ]);

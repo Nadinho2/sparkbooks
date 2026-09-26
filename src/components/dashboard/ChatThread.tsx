@@ -67,9 +67,19 @@ export function ChatThread({
 
   // Load linked entries for initial messages
   useEffect(() => {
-    loadLinkedEntries(initialMessages);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let ignore = false;
+    const ids = initialMessages.map((m) => m.id);
+    if (ids.length > 0) {
+      fetchLinkedEntries(tenantId, ids).then((entries) => {
+        if (!ignore) {
+          setLinkedEntries((prev) => ({ ...prev, ...entries }));
+        }
+      });
+    }
+    return () => {
+      ignore = true;
+    };
+  }, [tenantId, initialMessages]);
 
   // Scroll to bottom on first load
   useEffect(() => {
@@ -245,7 +255,7 @@ export function ChatThread({
         )}
 
         {/* Date-grouped messages */}
-        {dateGroups.map((group, gi) => (
+        {dateGroups.map((group) => (
           <div key={group.date.toISOString()}>
             {/* Date divider */}
             <div className="flex items-center justify-center my-4">

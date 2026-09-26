@@ -15,8 +15,6 @@ import {
 } from "@/lib/billing-server";
 import { createHmac, timingSafeEqual } from "crypto";
 
-const FETCH_TIMEOUT_MS = 15_000; // 15s timeout for all external API calls
-
 /**
  * GET — WhatsApp webhook verification.
  * Meta sends hub.mode, hub.verify_token, hub.challenge.
@@ -61,12 +59,40 @@ function verifyHmacSignature(body: string, signature: string): boolean {
    Helpers
    ─────────────────────────────────────────── */
 
-async function findTenantByPhone(supabase: ReturnType<typeof createAdminClient>, phone: string) {
+async function findTenantByPhone(
+  supabase: ReturnType<typeof createAdminClient>,
+  phone: string,
+): Promise<{ id: number; business_name: string; whatsapp_number: string; is_suspended?: boolean } | null> {
+  // 1. Try fast indexed RPC lookup
+  try {
+    const { data, error } = await supabase.rpc("find_tenant_by_phone", {
+      phone_input: phone,
+    });
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data[0];
+    }
+  } catch {
+    // Fall back to query
+  }
+
+  // 2. Targeted query with database-level suffix matching
   const normalized = normalizePhone(phone);
-  // Filter at database level: fetch all tenants and match in JS
+  const suffix = normalized.slice(-10);
+
+  const { data: matched } = await supabase
+    .from("tenants")
+    .select("id, business_name, whatsapp_number, is_suspended")
+    .or(`whatsapp_number.ilike.%${suffix}%,whatsapp_number.eq.${normalized}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (matched) return matched;
+
+  // 3. Fallback scan if numbers had non-standard characters
   const { data: tenants } = await supabase
     .from("tenants")
-    .select("id, business_name, whatsapp_number, is_suspended");
+    .select("id, business_name, whatsapp_number, is_suspended")
+    .limit(50);
 
   if (!tenants) return null;
 
@@ -75,7 +101,7 @@ async function findTenantByPhone(supabase: ReturnType<typeof createAdminClient>,
       const tPhone = normalizePhone(t.whatsapp_number);
       return (
         tPhone === normalized ||
-        tPhone.slice(-10) === normalized.slice(-10)
+        tPhone.slice(-10) === suffix
       );
     }) ?? null
   );
@@ -83,32 +109,40 @@ async function findTenantByPhone(supabase: ReturnType<typeof createAdminClient>,
 
 /**
  * Find a team member by their WhatsApp number for a given tenant.
- * Matches using the same normalization as findTenantByPhone.
+ * Uses indexed RPC first, then targeted database query.
  */
 async function findSenderMember(
   supabase: ReturnType<typeof createAdminClient>,
   tenantId: number,
   fromPhone: string,
 ): Promise<number | null> {
+  // 1. Try fast indexed RPC lookup
+  try {
+    const { data, error } = await supabase.rpc("find_sender_member_by_phone", {
+      p_tenant_id: tenantId,
+      phone_input: fromPhone,
+    });
+    if (!error && typeof data === "number") {
+      return data;
+    }
+  } catch {
+    // Fall back to query
+  }
+
   const normalized = normalizePhone(fromPhone);
-  const { data: members } = await supabase
+  const suffix = normalized.slice(-10);
+
+  // 2. Targeted query fallback
+  const { data: member } = await supabase
     .from("tenant_members")
     .select("id, whatsapp_number")
     .eq("tenant_id", tenantId)
     .eq("status", "active")
-    .not("whatsapp_number", "is", null);
+    .or(`whatsapp_number.ilike.%${suffix}%,whatsapp_number.eq.${normalized}`)
+    .limit(1)
+    .maybeSingle();
 
-  if (!members) return null;
-
-  const matched = members.find((m) => {
-    const mPhone = normalizePhone(m.whatsapp_number);
-    return (
-      mPhone === normalized ||
-      mPhone.slice(-10) === normalized.slice(-10)
-    );
-  });
-
-  return matched?.id ?? null;
+  return member?.id ?? null;
 }
 
 function buildConfirmationMessage(
@@ -171,9 +205,24 @@ function parsePendingContext(failureReason: string | null): { newProductName: st
   }
 }
 
-/* ───────────────────────────────────────────
-   POST — inbound message handler
-   ─────────────────────────────────────────── */
+interface WhatsAppWebhookPayload {
+  entry?: Array<{
+    changes?: Array<{
+      value?: {
+        messages?: Array<{
+          id: string;
+          from: string;
+          type: string;
+          text?: { body: string };
+          voice?: { id: string };
+        }>;
+        metadata?: {
+          display_phone_number: string;
+        };
+      };
+    }>;
+  }>;
+}
 
 export async function POST(request: NextRequest) {
   // ── 0. HMAC SIGNATURE VERIFICATION ──
@@ -189,11 +238,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  // Parse body — using unknown for external webhook payload
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let body: any;
+  // Parse body
+  let body: WhatsAppWebhookPayload;
   try {
-    body = JSON.parse(rawBody);
+    body = JSON.parse(rawBody) as WhatsAppWebhookPayload;
   } catch {
     return NextResponse.json({ ok: true });
   }
@@ -221,36 +269,37 @@ export async function POST(request: NextRequest) {
  * Full async message processing — runs after 200 is returned.
  * This prevents Meta webhook retries due to slow AI/API calls.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
- async function processMessageAsync(body: any) {
-   const supabase = createAdminClient();
+async function processMessageAsync(body: WhatsAppWebhookPayload) {
+  const supabase = createAdminClient();
 
-   const entry = (body as any)?.entry?.[0];
-   const change = entry?.changes?.[0];
-   const value = change?.value;
-   const message = value?.messages?.[0];
-   const metadata = value?.metadata;
+  const entry = body.entry?.[0];
+  const change = entry?.changes?.[0];
+  const value = change?.value;
+  const message = value?.messages?.[0];
+  const metadata = value?.metadata;
 
-   const waMessageId = message.id as string;
-   const fromPhone = message.from as string;
-   const toPhone = metadata.display_phone_number as string;
-   const msgType = message.type as string;
+  if (!message || !metadata) return;
 
-   // ── Determine text content ──
-   let rawText: string | null = null;
-   let isVoice = false;
-   let voiceTranscript: string | null = null;
-   let voiceMediaUrl: string | null = null;
+  const waMessageId = message.id;
+  const fromPhone = message.from;
+  const toPhone = metadata.display_phone_number;
+  const msgType = message.type;
 
-   if (msgType === "text") {
-     rawText = (message.text as any)?.body as string;
-   } else if (msgType === "voice") {
-     const mediaId = (message.voice as any)?.id as string;
-     if (!mediaId) return;
-     isVoice = true;
-   } else {
-     return;
-   }
+  // ── Determine text content ──
+  let rawText: string | null = null;
+  let isVoice = false;
+  let voiceTranscript: string | null = null;
+  let voiceMediaUrl: string | null = null;
+
+  if (msgType === "text") {
+    rawText = message.text?.body ?? null;
+  } else if (msgType === "voice") {
+    const mediaId = message.voice?.id;
+    if (!mediaId) return;
+    isVoice = true;
+  } else {
+    return;
+  }
 
   // ── 1. IDEMPOTENCY CHECK ──
   const { data: existingMsg } = await supabase
@@ -300,7 +349,8 @@ export async function POST(request: NextRequest) {
 
   // ── 3. VOICE: download → upload → transcribe ──
   if (isVoice) {
-    const mediaId = (message.voice as any)?.id as string;
+    const mediaId = message.voice?.id;
+    if (!mediaId) return;
     try {
       const result = await processVoiceMessage(
         supabase,

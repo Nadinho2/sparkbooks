@@ -45,7 +45,49 @@ export async function updateProductStock(
     alertPhone,
   } = params;
 
-  // 1. Get current product state
+  // 1. Try atomic PostgreSQL RPC execution
+  try {
+    const { data, error } = await supabase.rpc("adjust_product_stock", {
+      p_tenant_id: tenantId,
+      p_product_id: productId,
+      p_change_qty: changeQty,
+      p_type: type,
+      p_source: source,
+      p_reason: reason ?? null,
+      p_linked_message_id: linkedMessageId ?? null,
+    });
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const res = data[0] as {
+        movement_id: number;
+        new_quantity: number;
+        product_name: string;
+        unit: string;
+        reorder_threshold: number | null;
+        last_low_stock_alert_at: string | null;
+      };
+      const movementId = Number(res.movement_id);
+      const newQty = Number(res.new_quantity);
+      const threshold = res.reorder_threshold != null ? Number(res.reorder_threshold) : null;
+
+      await checkAndSendLowStockAlert(supabase, {
+        productId,
+        tenantId,
+        productName: res.product_name,
+        newQty,
+        unit: res.unit,
+        threshold,
+        lastAlertAt: res.last_low_stock_alert_at,
+        alertPhone,
+      });
+
+      return movementId;
+    }
+  } catch {
+    // Fall back to sequential execution
+  }
+
+  // 2. Sequential fallback if RPC is not yet loaded in DB
   const { data: product, error: fetchError } = await supabase
     .from("products")
     .select("id, name, quantity, unit, reorder_threshold, last_low_stock_alert_at")
@@ -61,7 +103,7 @@ export async function updateProductStock(
   const currentQty = Number(product.quantity);
   const newQty = Math.max(0, currentQty + changeQty);
 
-  // 2. Insert stock_movements row (ALWAYS — this is the audit trail)
+  // Insert stock_movements row (audit trail)
   const { data: movement, error: moveError } = await supabase
     .from("stock_movements")
     .insert({
@@ -80,7 +122,7 @@ export async function updateProductStock(
     throw new Error(`Failed to insert stock movement: ${moveError.message}`);
   }
 
-  // 3. Update product quantity
+  // Update product quantity
   const { error: updateError } = await supabase
     .from("products")
     .update({ quantity: newQty })
@@ -90,7 +132,7 @@ export async function updateProductStock(
     throw new Error(`Failed to update product quantity: ${updateError.message}`);
   }
 
-  // 4. Check low-stock threshold and send alert
+  // Check low-stock threshold and send alert
   await checkAndSendLowStockAlert(supabase, {
     productId,
     tenantId,

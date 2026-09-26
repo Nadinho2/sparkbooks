@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { BUSINESS_CATEGORIES } from "@/lib/tenant";
 
 const BUSINESS_TYPES = Object.keys(BUSINESS_CATEGORIES);

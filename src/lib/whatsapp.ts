@@ -13,16 +13,37 @@ export function normalizePhone(number: string): string {
   return number.replace(/[+\s\-()]/g, "").trim();
 }
 
+export type TemplateParameter = {
+  type: string;
+  text?: string;
+  currency?: { fallback_value: string; code: string; amount_1000: number };
+};
+
+export type TemplateComponent = {
+  type: string;
+  parameters: TemplateParameter[];
+};
+
+export interface FallbackTemplateConfig {
+  name: string;
+  components?: TemplateComponent[];
+}
+
 /**
  * Send a free-form text message via WhatsApp Cloud API.
- * Only valid within the 24-hour customer service window.
+ * If sending fails due to Meta's 24-hour customer service window (error 131047)
+ * and a fallbackTemplate is provided, automatically sends the approved template message instead.
  */
-export async function sendTextMessage(to: string, body: string): Promise<void> {
+export async function sendTextMessage(
+  to: string,
+  body: string,
+  fallbackTemplate?: FallbackTemplateConfig,
+): Promise<{ success: boolean; errorCode?: number; error?: string }> {
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneNumberId) {
     console.error("WhatsApp: missing ACCESS_TOKEN or PHONE_NUMBER_ID");
-    return;
+    return { success: false, error: "Missing WhatsApp credentials" };
   }
 
   const url = `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}/messages`;
@@ -47,9 +68,25 @@ export async function sendTextMessage(to: string, body: string): Promise<void> {
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      console.error("WhatsApp send error:", err);
+      const err = (await res.json()) as { error?: { code?: number; message?: string } };
+      const code = err.error?.code;
+      console.warn(`WhatsApp send failed (code ${code}):`, err.error?.message);
+
+      // Error 131047: Outside 24-hour service window -> attempt template fallback
+      if (code === 131047 && fallbackTemplate) {
+        console.log(`24-hour window expired. Falling back to template: ${fallbackTemplate.name}`);
+        await sendTemplateMessage(to, fallbackTemplate.name, fallbackTemplate.components);
+        return { success: true };
+      }
+
+      return { success: false, errorCode: code, error: err.error?.message };
     }
+
+    return { success: true };
+  } catch (e) {
+    const errorMsg = (e as Error).message;
+    console.error("WhatsApp network/fetch error:", errorMsg);
+    return { success: false, error: errorMsg };
   } finally {
     clearTimeout(timeout);
   }

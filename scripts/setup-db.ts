@@ -104,7 +104,7 @@ async function main() {
   console.log(`Project ref: ${projectRef}`);
 
   // Read and execute migration
-  const sqlPath = resolve(process.cwd(), "supabase/migrations/001_setup_schema.sql");
+  const sqlPath = resolve(process.cwd(), "supabase/all_migrations.sql");
   const sql = readFileSync(sqlPath, "utf-8");
 
   // Split into individual statements (naive split by semicolons + newlines)
@@ -130,7 +130,7 @@ async function main() {
         " 1. Go to https://supabase.com/dashboard/project/" + projectRef + "/sql",
       );
       console.log(
-        " 2. Paste the contents of supabase/migrations/001_setup_schema.sql",
+        " 2. Paste the contents of supabase/all_migrations.sql",
       );
       console.log(
         " 3. Click 'Run'\n",

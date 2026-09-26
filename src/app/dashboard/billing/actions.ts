@@ -36,11 +36,14 @@ export interface BillingState {
 /**
  * Fetch current billing state for the tenant (server-side).
  */
-export async function getBillingState(_clientTenantId: number): Promise<BillingState> {
+export async function getBillingState(clientTenantId?: number): Promise<BillingState> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
   const tenantId = await getCurrentTenantId();
+  if (clientTenantId && clientTenantId !== tenantId) {
+    throw new Error("Unauthorized tenant access");
+  }
 
   const billing = await getTenantBilling(tenantId);
   if (!billing) throw new Error("Tenant not found");
@@ -168,12 +171,15 @@ export async function startSubscription(
  * Cancel subscription — mark as cancelled but keep access until period_end.
  */
 export async function cancelSubscription(
-  _clientTenantId: number,
+  clientTenantId?: number,
 ): Promise<{ success: boolean; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
   const tenantId = await getCurrentTenantId();
+  if (clientTenantId && clientTenantId !== tenantId) {
+    throw new Error("Unauthorized tenant access");
+  }
 
   const supabase = createAdminClient();
 
@@ -216,11 +222,14 @@ export async function cancelSubscription(
 /**
  * Fetch payment history from Paystack.
  */
-export async function getPaymentHistory(_clientTenantId: number) {
+export async function getPaymentHistory(clientTenantId?: number) {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
   const tenantId = await getCurrentTenantId();
+  if (clientTenantId && clientTenantId !== tenantId) {
+    throw new Error("Unauthorized tenant access");
+  }
 
   const supabase = createAdminClient();
   const { data: tenant } = await supabase

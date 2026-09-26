@@ -25,7 +25,7 @@ export default async function ProductsPage() {
 
   // Fetch latest restock date per product (max created_at from stock_movements where type='in')
   const productIds = (products ?? []).map((p) => p.id);
-  let restockMap: Record<number, string> = {};
+  const restockMap: Record<number, string> = {};
 
   if (productIds.length > 0) {
     const { data: restocks } = await supabase

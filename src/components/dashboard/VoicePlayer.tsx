@@ -9,6 +9,10 @@ interface VoicePlayerProps {
   transcript: string | null;
 }
 
+const STATIC_BAR_HEIGHTS = [
+  35, 60, 45, 75, 50, 85, 40, 65, 90, 55, 70, 30, 80, 60, 45, 65, 40, 50,
+];
+
 export function VoicePlayer({ storagePath, transcript }: VoicePlayerProps) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -175,7 +179,7 @@ export function VoicePlayer({ storagePath, transcript }: VoicePlayerProps) {
               style={{
                 height: playing
                   ? undefined
-                  : `${20 + Math.random() * 60}%`,
+                  : `${STATIC_BAR_HEIGHTS[i % STATIC_BAR_HEIGHTS.length]}%`,
                 animationPlayState: playing ? "running" : "paused",
                 animationDelay: `${i * 0.06}s`,
                 opacity: progress > (i / 18) * 100 ? 1 : 0.3,

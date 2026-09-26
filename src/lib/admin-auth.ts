@@ -19,11 +19,22 @@ export async function requireAdmin(): Promise<string> {
     redirect("/sign-in");
   }
 
-  const metadata = sessionClaims?.publicMetadata as
-    | { role?: string }
-    | undefined;
+  let role = (sessionClaims?.publicMetadata as { role?: string } | undefined)?.role;
 
-  if (metadata?.role !== "admin") {
+  // Fallback: If publicMetadata is not customized in the Clerk session JWT template,
+  // query the user record directly via Clerk client.
+  if (!role) {
+    try {
+      const { clerkClient } = await import("@clerk/nextjs/server");
+      const client = await clerkClient();
+      const user = await client.users.getUser(userId);
+      role = (user.publicMetadata as { role?: string } | undefined)?.role;
+    } catch (err) {
+      console.error("[requireAdmin] Failed to fetch user metadata from Clerk:", err);
+    }
+  }
+
+  if (role !== "admin") {
     redirect("/sign-in");
   }
 
@@ -37,9 +48,18 @@ export async function isAdmin(): Promise<boolean> {
   const { userId, sessionClaims } = await auth();
   if (!userId) return false;
 
-  const metadata = sessionClaims?.publicMetadata as
-    | { role?: string }
-    | undefined;
+  let role = (sessionClaims?.publicMetadata as { role?: string } | undefined)?.role;
 
-  return metadata?.role === "admin";
+  if (!role) {
+    try {
+      const { clerkClient } = await import("@clerk/nextjs/server");
+      const client = await clerkClient();
+      const user = await client.users.getUser(userId);
+      role = (user.publicMetadata as { role?: string } | undefined)?.role;
+    } catch {
+      return false;
+    }
+  }
+
+  return role === "admin";
 }

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-auth";
 import { AdminSidebar } from "@/components/admin/Sidebar";
 
@@ -19,8 +18,10 @@ export default async function AdminLayout({
   return (
     <div className="min-h-screen flex bg-paper">
       <AdminSidebar navItems={navItems} />
-      <main className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6">
-        {children}
+      <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 pt-16 lg:pt-6">
+        <div className="max-w-6xl mx-auto w-full">
+          {children}
+        </div>
       </main>
     </div>
   );
