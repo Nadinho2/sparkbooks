@@ -311,14 +311,45 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   if (existingMsg) return;
 
   // ── 2. FIND TENANT ──
-  const tenant = await findTenantByPhone(supabase, toPhone);
+  // 1) Match sender's phone (fromPhone) against tenant owner
+  let tenant = await findTenantByPhone(supabase, fromPhone);
+  let senderMemberId: number | null = null;
+
   if (!tenant) {
-    console.warn(`No tenant found for phone: ${toPhone}`);
+    // 2) Match sender's phone against registered active team members
+    const cleanFrom = normalizePhone(fromPhone);
+    const suffix10 = cleanFrom.slice(-10);
+    const { data: member } = await supabase
+      .from("tenant_members")
+      .select("id, tenant_id, tenants!tenant_id(id, business_name, whatsapp_number, is_suspended)")
+      .eq("status", "active")
+      .or(`whatsapp_number.ilike.%${suffix10}%,whatsapp_number.eq.${cleanFrom}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (member?.tenants) {
+      tenant = member.tenants as unknown as {
+        id: number;
+        business_name: string;
+        whatsapp_number: string;
+        is_suspended?: boolean;
+      };
+      senderMemberId = member.id;
+    } else {
+      // 3) Fallback: match by toPhone (for tenants with dedicated bot numbers)
+      tenant = await findTenantByPhone(supabase, toPhone);
+    }
+  }
+
+  if (!tenant) {
+    console.warn(`No tenant found for sender: ${fromPhone} (bot: ${toPhone})`);
     return;
   }
 
-  // ── 2b. FIND SENDER MEMBER ──
-  const senderMemberId = await findSenderMember(supabase, tenant.id, fromPhone);
+  // ── 2b. FIND SENDER MEMBER (if not already resolved) ──
+  if (!senderMemberId) {
+    senderMemberId = await findSenderMember(supabase, tenant.id, fromPhone);
+  }
 
   // ── 2c. SUSPENSION CHECK ──
   if ((tenant as { is_suspended?: boolean }).is_suspended) return;
