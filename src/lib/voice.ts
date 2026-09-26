@@ -29,7 +29,10 @@ async function getMediaMeta(mediaId: string): Promise<MetaMediaMeta> {
 
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "curl/7.64.1",
+      },
       signal: controller.signal,
     });
 
@@ -58,7 +61,10 @@ async function downloadAudio(url: string): Promise<ArrayBuffer> {
 
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "curl/7.64.1",
+      },
       signal: controller.signal,
     });
 
@@ -98,11 +104,11 @@ async function uploadToStorage(
   const ext = mimeToExt(mimeType);
   const path = `${tenantId}/${messageId}.${ext}`;
 
-  const blob = new Blob([buffer], { type: mimeType });
+  const nodeBuffer = Buffer.from(buffer);
 
   const { error } = await supabase.storage
     .from(STORAGE_BUCKET)
-    .upload(path, blob, { contentType: mimeType, upsert: true });
+    .upload(path, nodeBuffer, { contentType: mimeType, upsert: true });
 
   if (error) {
     throw new Error(`Storage upload failed: ${error.message}`);
@@ -119,14 +125,17 @@ export async function transcribeAudio(
   buffer: ArrayBuffer,
   mimeType: string,
 ): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY not set");
+  const groqApiKey = process.env.GROQ_API_KEY;
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+
+  if (!groqApiKey && !openaiApiKey) {
+    throw new Error("Neither GROQ_API_KEY nor OPENAI_API_KEY is configured for voice transcription");
+  }
 
   const ext = mimeToExt(mimeType);
   const blob = new Blob([buffer], { type: mimeType });
   const formData = new FormData();
   formData.append("file", blob, `audio.${ext}`);
-  formData.append("model", OPENAI_TRANSCRIPTION_MODEL);
   formData.append("language", "en");
   formData.append(
     "prompt",
@@ -136,8 +145,17 @@ export async function transcribeAudio(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
+  // Use Groq Whisper if available (free & fast), else OpenAI Whisper
+  const endpoint = groqApiKey
+    ? "https://api.groq.com/openai/v1/audio/transcriptions"
+    : "https://api.openai.com/v1/audio/transcriptions";
+  const apiKey = groqApiKey || openaiApiKey;
+  const model = groqApiKey ? "whisper-large-v3-turbo" : OPENAI_TRANSCRIPTION_MODEL;
+
+  formData.append("model", model);
+
   try {
-    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
       body: formData,
@@ -146,6 +164,9 @@ export async function transcribeAudio(
 
     if (!res.ok) {
       const err = await res.text();
+      if (err.includes("credit_balance_exhausted") || err.includes("insufficient_quota")) {
+        throw new Error("OPENAI_QUOTA_EXHAUSTED: OpenAI API credit balance is $0. Please add credits to your OpenAI account or set a free GROQ_API_KEY.");
+      }
       throw new Error(`Transcription failed: ${res.status} ${err}`);
     }
 

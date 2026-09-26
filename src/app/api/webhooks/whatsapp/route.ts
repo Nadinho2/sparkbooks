@@ -397,6 +397,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           direction: "inbound",
           type: "voice",
           status: "failed",
+          failure_reason: "voice_too_large",
           sender_member_id: senderMemberId,
         });
         await replyToUser(
@@ -409,20 +410,28 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         return;
       }
 
+      const isQuotaError = errorMsg.includes("OPENAI_QUOTA_EXHAUSTED");
       console.error("Voice processing error:", err);
+
       await supabase.from("whatsapp_messages").insert({
         tenant_id: tenant.id,
         wa_message_id: waMessageId,
         direction: "inbound",
         type: "voice",
         status: "failed",
+        failure_reason: isQuotaError ? "openai_quota_exhausted" : errorMsg,
         sender_member_id: senderMemberId,
       });
+
+      const userReply = isQuotaError
+        ? "Voice transcription is temporarily paused: OpenAI API credit balance is exhausted ($0 balance). Please add credits at platform.openai.com or type your message for now."
+        : "Sorry, I ran into trouble processing your voice note. Please type your message and I'll handle it right away.";
+
       await replyToUser(
         supabase,
         tenant.id,
         fromPhone,
-        "Sorry, I ran into trouble processing your voice note. Please type your message and I'll handle it right away.",
+        userReply,
         senderMemberId,
       );
       return;
