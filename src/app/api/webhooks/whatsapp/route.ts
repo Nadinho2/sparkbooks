@@ -271,6 +271,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   } else if (msgType === "audio" || msgType === "voice") {
     // Meta WhatsApp Cloud API delivers voice notes under type: "audio" with message.audio.id
     mediaId = message.audio?.id ?? message.voice?.id ?? null;
+    console.log("Inbound audio message detected:", { msgType, mediaId, audio: message.audio, voice: message.voice });
     if (!mediaId) return;
     isVoice = true;
   } else {

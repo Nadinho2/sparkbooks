@@ -22,13 +22,18 @@ interface MetaMediaMeta {
 async function getMediaMeta(mediaId: string): Promise<MetaMediaMeta> {
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   if (!token) throw new Error("WHATSAPP_ACCESS_TOKEN not set");
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-  const url = `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${mediaId}`;
+  const cleanMediaId = encodeURIComponent(mediaId.trim());
+  const urlWithPhone = phoneId
+    ? `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${cleanMediaId}?phone_number_id=${phoneId}`
+    : `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${cleanMediaId}`;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, {
+    let res = await fetch(urlWithPhone, {
       headers: {
         Authorization: `Bearer ${token}`,
         "User-Agent": "curl/7.64.1",
@@ -36,8 +41,25 @@ async function getMediaMeta(mediaId: string): Promise<MetaMediaMeta> {
       signal: controller.signal,
     });
 
+    // If query with phone_number_id failed, try direct media ID URL
+    if (!res.ok && phoneId) {
+      const fallbackUrl = `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${cleanMediaId}`;
+      const fallbackRes = await fetch(fallbackUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "User-Agent": "curl/7.64.1",
+        },
+        signal: controller.signal,
+      });
+      if (fallbackRes.ok) {
+        res = fallbackRes;
+      }
+    }
+
     if (!res.ok) {
-      throw new Error(`Meta media fetch failed: ${res.status} ${res.statusText}`);
+      const errText = await res.text();
+      console.error(`Meta media fetch failed for mediaId ${mediaId}: ${res.status}`, errText);
+      throw new Error(`Meta media fetch failed (${res.status}): ${errText}`);
     }
 
     const data = await res.json();
