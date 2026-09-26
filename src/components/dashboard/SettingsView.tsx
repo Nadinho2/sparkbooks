@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { BUSINESS_CATEGORIES } from "@/lib/tenant";
 import { updateBusinessSettings } from "@/app/dashboard/settings/actions";
+import { getWhatsAppBotUrl, SPARKBOOKS_BOT_PHONE } from "@/lib/whatsapp";
 
 interface SettingsViewProps {
   tenant: {
@@ -157,6 +158,23 @@ export function SettingsView({ tenant, email }: SettingsViewProps) {
         <p className="text-xs text-ink-muted mb-4">
           All team members registered in your account send entries to the SparkBooks WhatsApp service.
         </p>
+
+        <div className="bg-sand/30 border border-rule rounded-lg p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <span className="text-[11px] font-medium uppercase tracking-wider text-ink-muted block">
+              Official WhatsApp Bot Number
+            </span>
+            <span className="font-mono text-sm font-semibold text-ink">+{SPARKBOOKS_BOT_PHONE}</span>
+          </div>
+          <a
+            href={getWhatsAppBotUrl(tenant.businessName)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#25D366] hover:bg-[#20ba59] text-white text-xs font-semibold shadow-xs transition-colors self-start sm:self-auto"
+          >
+            Open WhatsApp Bot ↗
+          </a>
+        </div>
 
         <div className="bg-paper rounded-lg p-3.5 border border-rule text-xs space-y-2 text-ink">
           <p className="font-medium text-ink">💡 Quick Tips for WhatsApp Logging:</p>
