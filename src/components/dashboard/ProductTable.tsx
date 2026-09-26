@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { formatNaira } from "@/lib/format";
 import { EditProductModal } from "./EditProductModal";
+import { ProductDetailModal } from "./ProductDetailModal";
 import { CategoryManager } from "./CategoryManager";
 import { softDeleteProduct } from "@/app/dashboard/products/actions";
 
@@ -18,6 +19,8 @@ export interface ProductRow {
   lastRestocked: string | null;
   totalValue: number;
   isLowStock: boolean;
+  totalSold?: number;
+  totalRevenue?: number;
 }
 
 export interface Category {
@@ -37,6 +40,7 @@ export function ProductTable({
   tenantId,
 }: ProductTableProps) {
   const [editing, setEditing] = useState<ProductRow | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<ProductRow | null>(null);
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
   const [showCategories, setShowCategories] = useState(false);
@@ -51,7 +55,12 @@ export function ProductTable({
   return (
     <>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="font-display text-xl text-ink">Products</h1>
+        <div>
+          <h1 className="font-display text-xl text-ink">Products</h1>
+          <p className="text-xs text-ink-muted hidden sm:block mt-0.5">
+            Click on any product to see units sold, price sold per item, and purchase costs.
+          </p>
+        </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => setAdding(true)}
@@ -78,20 +87,21 @@ export function ProductTable({
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-rule text-left text-xs text-ink-muted">
+              <tr className="border-b border-rule text-left text-xs text-ink-muted bg-sand/30">
                 <th className="py-3 px-4 font-normal">Product</th>
                 <th className="py-3 px-4 font-normal">Category</th>
+                <th className="py-3 px-4 font-normal text-right">Sold</th>
                 <th className="py-3 px-4 font-normal text-right">On hand</th>
-                <th className="py-3 px-4 font-normal text-right">Unit cost</th>
+                <th className="py-3 px-4 font-normal text-right">Price bought</th>
                 <th className="py-3 px-4 font-normal text-right">Total value</th>
                 <th className="py-3 px-4 font-normal">Last restocked</th>
-                <th className="py-3 px-4 font-normal w-10" />
+                <th className="py-3 px-4 font-normal text-right w-28">Actions</th>
               </tr>
             </thead>
             <tbody>
               {products.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-ink-muted text-sm">
+                  <td colSpan={8} className="py-12 text-center text-ink-muted text-sm">
                     No products yet. Add products during onboarding or via the dashboard.
                   </td>
                 </tr>
@@ -99,12 +109,39 @@ export function ProductTable({
               {products.map((p) => (
                 <tr
                   key={p.id}
-                  className={`border-b border-rule/50 ${p.isLowStock ? "bg-flag-light/50" : ""}`}
+                  onClick={() => setSelectedDetail(p)}
+                  className={`border-b border-rule/50 hover:bg-sand-light/60 transition-colors cursor-pointer group ${
+                    p.isLowStock ? "bg-flag-light/40" : ""
+                  }`}
+                  title="Click to view sales and price analytics"
                 >
                   <td className="py-3 px-4">
-                    <span className="text-ink font-medium">{p.name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-ink font-medium group-hover:underline">
+                        {p.name}
+                      </span>
+                      <span className="text-[11px] text-ink-muted group-hover:text-ink transition-colors">
+                        ↗
+                      </span>
+                    </div>
                   </td>
                   <td className="py-3 px-4 text-ink-muted">{p.categoryName ?? "—"}</td>
+                  <td className="py-3 px-4 text-right">
+                    {p.totalSold != null && p.totalSold > 0 ? (
+                      <div>
+                        <span className="font-mono text-ink font-medium">
+                          {p.totalSold} {p.unit}
+                        </span>
+                        {p.totalRevenue != null && p.totalRevenue > 0 && (
+                          <span className="block text-[11px] text-money font-medium">
+                            {formatNaira(p.totalRevenue)}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-ink-muted text-xs">0 sold</span>
+                    )}
+                  </td>
                   <td className="py-3 px-4 text-right">
                     <span className={`font-mono ${p.isLowStock ? "text-flag font-medium" : "text-ink"}`}>
                       {p.quantity}
@@ -121,16 +158,31 @@ export function ProductTable({
                     {formatNaira(p.totalValue)}
                   </td>
                   <td className="py-3 px-4 text-ink-muted text-xs">{p.lastRestocked ?? "—"}</td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-1">
+                  <td className="py-3 px-4 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
                       <button
-                        onClick={() => setEditing(p)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedDetail(p);
+                        }}
+                        className="text-xs text-ink font-medium hover:underline px-1 py-0.5"
+                      >
+                        Insights
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditing(p);
+                        }}
                         className="text-xs text-ink-muted hover:text-ink px-1 py-0.5"
                       >
                         Edit
                       </button>
                       <button
-                        onClick={() => setDeleting(p)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleting(p);
+                        }}
                         className="text-xs text-flag hover:opacity-80 px-1 py-0.5"
                       >
                         Delete
@@ -154,47 +206,92 @@ export function ProductTable({
         {products.map((p) => (
           <div
             key={p.id}
-            className={`bg-white rounded-xl border p-4 ${p.isLowStock ? "border-flag bg-flag-light/30" : "border-rule"}`}
+            onClick={() => setSelectedDetail(p)}
+            className={`bg-white rounded-xl border p-4 cursor-pointer hover:border-ink-muted transition-colors ${
+              p.isLowStock ? "border-flag bg-flag-light/30" : "border-rule"
+            }`}
           >
             <div className="flex items-start justify-between mb-2">
               <div>
-                <h3 className="text-ink font-medium">{p.name}</h3>
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-ink font-medium">{p.name}</h3>
+                  <span className="text-xs text-ink-muted">↗</span>
+                </div>
                 {p.categoryName && (
                   <span className="text-xs text-ink-muted">{p.categoryName}</span>
                 )}
               </div>
-              <span className={`font-mono text-sm font-medium ${p.isLowStock ? "text-flag" : "text-ink"}`}>
-                {p.quantity}
-                <span className="text-ink-muted text-xs ml-1">{p.unit}</span>
-              </span>
+              <div className="text-right">
+                <span className={`font-mono text-sm font-medium ${p.isLowStock ? "text-flag" : "text-ink"}`}>
+                  {p.quantity}
+                  <span className="text-ink-muted text-xs ml-1">{p.unit}</span>
+                </span>
+                <span className="block text-[10px] text-ink-muted">On hand</span>
+              </div>
             </div>
-            <div className="flex items-center justify-between text-xs text-ink-muted mb-2">
-              <span>Unit cost: {p.unitCost != null ? formatNaira(p.unitCost) : "—"}</span>
-              <span>Value: {formatNaira(p.totalValue)}</span>
+
+            <div className="grid grid-cols-2 gap-2 text-xs text-ink-muted my-2.5 py-2 border-y border-rule/50">
+              <div>
+                <span className="text-[11px] block">Price bought (cost)</span>
+                <span className="font-mono text-ink font-medium">
+                  {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] block">Units sold</span>
+                <span className="font-mono text-ink font-semibold">
+                  {p.totalSold ?? 0} {p.unit}
+                </span>
+              </div>
             </div>
-            {p.lastRestocked && (
-              <p className="text-xs text-ink-muted mb-2">Last restocked: {p.lastRestocked}</p>
-            )}
+
             {p.isLowStock && (
-              <p className="text-xs text-flag font-medium mb-2">Low stock — below {p.reorderThreshold} threshold</p>
+              <p className="text-xs text-flag font-medium mb-2">
+                Low stock — below {p.reorderThreshold} threshold
+              </p>
             )}
-            <div className="flex items-center gap-3 pt-2 border-t border-rule/50">
-              <button
-                onClick={() => setEditing(p)}
-                className="text-xs text-ink-muted hover:text-ink"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => setDeleting(p)}
-                className="text-xs text-flag hover:opacity-80"
-              >
-                Delete
-              </button>
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-ink font-medium flex items-center gap-1">
+                View sales & profit ↗
+              </span>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditing(p);
+                  }}
+                  className="text-xs text-ink-muted hover:text-ink"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleting(p);
+                  }}
+                  className="text-xs text-flag hover:opacity-80"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         ))}
       </div>
+
+      {/* Product Detail & Analytics Modal */}
+      {selectedDetail && (
+        <ProductDetailModal
+          product={selectedDetail}
+          tenantId={tenantId}
+          onClose={() => setSelectedDetail(null)}
+          onEdit={(prod) => {
+            setSelectedDetail(null);
+            setEditing(prod);
+          }}
+        />
+      )}
 
       {/* Edit modal */}
       {editing && (
@@ -252,3 +349,4 @@ export function ProductTable({
     </>
   );
 }
+
