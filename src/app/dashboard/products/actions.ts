@@ -189,6 +189,7 @@ export interface ProductAnalytics {
     totalAmount: number;
     unitPrice: number;
     unitCost: number | null;
+    totalCost: number | null;
     profit: number | null;
     marginPct: number | null;
     source: string;
@@ -307,7 +308,8 @@ export async function getProductAnalytics(
 
     const totalAmount = Number(s.amount);
     const unitPrice = qty > 0 ? Math.round((totalAmount / qty) * 100) / 100 : totalAmount;
-    const profit = pUnitCost != null ? totalAmount - qty * pUnitCost : null;
+    const totalCost = pUnitCost != null ? Math.round(qty * pUnitCost * 100) / 100 : null;
+    const profit = totalCost != null ? totalAmount - totalCost : null;
     const marginPct =
       pUnitCost != null && totalAmount > 0
         ? Math.round(((profit ?? 0) / totalAmount) * 1000) / 10
@@ -324,6 +326,7 @@ export async function getProductAnalytics(
       totalAmount,
       unitPrice,
       unitCost: pUnitCost,
+      totalCost,
       profit,
       marginPct,
       source: s.source,

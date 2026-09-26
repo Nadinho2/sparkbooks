@@ -375,7 +375,7 @@ export function ProductDetailModal({
                           <th className="py-2.5 px-3.5 font-medium text-right">Qty Sold</th>
                           <th className="py-2.5 px-3.5 font-medium text-right">Price Sold / Item</th>
                           <th className="py-2.5 px-3.5 font-medium text-right">Total Amount</th>
-                          <th className="py-2.5 px-3.5 font-medium text-right">Cost (Bought For)</th>
+                          <th className="py-2.5 px-3.5 font-medium text-right">Total Cost (Bought For)</th>
                           <th className="py-2.5 px-3.5 font-medium text-right">Profit on Sale</th>
                           <th className="py-2.5 px-3.5 font-medium text-center">Channel</th>
                         </tr>
@@ -398,8 +398,25 @@ export function ProductDetailModal({
                             <td className="py-3 px-3.5 text-right font-mono text-ink">
                               {formatNaira(sale.totalAmount)}
                             </td>
-                            <td className="py-3 px-3.5 text-right font-mono text-ink-muted">
-                              {sale.unitCost != null ? formatNaira(sale.unitCost) : "—"}
+                            <td className="py-3 px-3.5 text-right font-mono">
+                              {sale.totalCost != null ? (
+                                <div>
+                                  <span className="text-ink font-medium">
+                                    {formatNaira(sale.totalCost)}
+                                  </span>
+                                  {sale.quantity > 1 && sale.unitCost != null ? (
+                                    <span className="block text-[10px] text-ink-muted">
+                                      ({formatNaira(sale.unitCost)} / {product.unit})
+                                    </span>
+                                  ) : (
+                                    <span className="block text-[10px] text-ink-muted">
+                                      (unit cost)
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-ink-muted">—</span>
+                              )}
                             </td>
                             <td className="py-3 px-3.5 text-right font-mono">
                               {sale.profit != null ? (
@@ -483,10 +500,15 @@ export function ProductDetailModal({
                             </span>
                           </div>
                           <div>
-                            <span className="text-[11px] text-ink-muted block">Bought for</span>
-                            <span className="font-mono text-ink-muted">
-                              {sale.unitCost != null ? formatNaira(sale.unitCost) : "—"}
+                            <span className="text-[11px] text-ink-muted block">Cost (bought for)</span>
+                            <span className="font-mono font-medium text-ink">
+                              {sale.totalCost != null ? formatNaira(sale.totalCost) : "—"}
                             </span>
+                            {sale.quantity > 1 && sale.unitCost != null && (
+                              <span className="block text-[10px] text-ink-muted font-mono">
+                                ({sale.quantity} × {formatNaira(sale.unitCost)})
+                              </span>
+                            )}
                           </div>
                           <div className="text-right">
                             <span className="text-[11px] text-ink-muted block">Profit</span>
