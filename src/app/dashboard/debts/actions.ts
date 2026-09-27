@@ -210,8 +210,9 @@ export async function recordDebtPayment(
     tenant_id: tenantId,
     type: "sale",
     amount: paymentAmount,
-    item_description: `Debt payment received from ${debt.customer_name}`,
+    item_description: `Debt payment received from ${debt.customer_name} [debt:${debt.id}] [rem:${newOwed}]`,
     payment_method: paymentMethod,
+    customer_name: debt.customer_name,
     source: "dashboard_manual",
   });
 
@@ -259,8 +260,9 @@ export async function settleDebt(debtId: number): Promise<{ success: boolean; er
       tenant_id: tenantId,
       type: "sale",
       amount: outstanding,
-      item_description: `Debt settlement from ${debt.customer_name}`,
+      item_description: `Debt settlement from ${debt.customer_name} [debt:${debtId}] [rem:0]`,
       payment_method: "cash",
+      customer_name: debt.customer_name,
       source: "dashboard_manual",
     });
   }

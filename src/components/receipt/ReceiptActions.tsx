@@ -8,6 +8,9 @@ interface ReceiptActionsProps {
   totalFormatted: string;
   receiptUrl: string;
   customerName?: string | null;
+  isRepayment?: boolean;
+  remainingBalance?: number | null;
+  remainingBalanceFormatted?: string | null;
 }
 
 export function ReceiptActions({
@@ -16,6 +19,9 @@ export function ReceiptActions({
   totalFormatted,
   receiptUrl,
   customerName,
+  isRepayment,
+  remainingBalance,
+  remainingBalanceFormatted,
 }: ReceiptActionsProps) {
   const [copied, setCopied] = useState(false);
 
@@ -38,9 +44,18 @@ export function ReceiptActions({
   };
 
   const greeting = customerName ? `Hello ${customerName}!` : "Hello!";
-  const waShareText = encodeURIComponent(
-    `${greeting} Here is your official payment receipt #${receiptNumber} (${totalFormatted}) from *${businessName}*:\n\n${receiptUrl}\n\nThank you for your business! 🙏`
-  );
+  let waText = "";
+  if (isRepayment) {
+    if (remainingBalance !== undefined && remainingBalance !== null && remainingBalance > 0) {
+      waText = `${greeting} Here is your official debt repayment receipt #${receiptNumber} from *${businessName}*:\n\n${receiptUrl}\n\n• *Amount Paid:* ${totalFormatted}\n• *Remaining Balance:* ${remainingBalanceFormatted || "₦" + remainingBalance.toLocaleString()}\n\nThank you for your payment! 🙏`;
+    } else {
+      waText = `${greeting} Here is your official debt payment receipt #${receiptNumber} from *${businessName}*:\n\n${receiptUrl}\n\n• *Amount Paid:* ${totalFormatted}\n• *Status:* Fully Settled & Cleared (₦0.00 balance) 🎉\n\nThank you for your business! 🙏`;
+    }
+  } else {
+    waText = `${greeting} Here is your official payment receipt #${receiptNumber} (${totalFormatted}) from *${businessName}*:\n\n${receiptUrl}\n\nThank you for your business! 🙏`;
+  }
+
+  const waShareText = encodeURIComponent(waText);
   const waShareUrl = `https://wa.me/?text=${waShareText}`;
 
   return (

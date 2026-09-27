@@ -856,7 +856,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     if (custName) {
       try {
-        const { data: matched } = await supabase
+        let { data: matched } = await supabase
           .from("customer_debts")
           .select("id, customer_name, total_amount, amount_paid, amount_owed")
           .eq("tenant_id", tenant.id)
@@ -864,6 +864,19 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           .ilike("customer_name", `%${custName}%`)
           .limit(1)
           .maybeSingle();
+
+        if (!matched && custName.includes(" ")) {
+          const firstName = custName.split(" ")[0];
+          const { data: matchedFirst } = await supabase
+            .from("customer_debts")
+            .select("id, customer_name, total_amount, amount_paid, amount_owed")
+            .eq("tenant_id", tenant.id)
+            .neq("status", "settled")
+            .ilike("customer_name", `%${firstName}%`)
+            .limit(1)
+            .maybeSingle();
+          matched = matchedFirst;
+        }
 
         debtor = matched;
       } catch (err) {
@@ -896,7 +909,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           tenant_id: tenant.id,
           type: "sale",
           amount: payment,
-          item_description: `Debt repayment from ${debtor.customer_name}`,
+          item_description: `Debt repayment from ${debtor.customer_name} [debt:${debtor.id}] [rem:${newOwed}]`,
           payment_method: method,
           customer_name: debtor.customer_name,
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",

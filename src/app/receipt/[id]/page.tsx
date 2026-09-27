@@ -47,32 +47,96 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
 
   // 3. Fetch optional linked customer debt / credit info
   let debtInfo: {
+    id?: number;
     customer_name: string;
     total_amount: number;
     amount_paid: number;
     amount_owed: number;
     status: string;
+    is_repayment: boolean;
+    repayment_balance?: number;
+    notes?: string | null;
   } | null = null;
 
   try {
-    const { data: debt } = await supabase
+    // A. Check if entry is the initial credit sale
+    const { data: directDebt } = await supabase
       .from("customer_debts")
-      .select("customer_name, total_amount, amount_paid, amount_owed, status")
+      .select("id, customer_name, total_amount, amount_paid, amount_owed, status, notes")
       .eq("linked_entry_id", entry.id)
       .limit(1)
       .maybeSingle();
 
-    if (debt) {
+    if (directDebt) {
       debtInfo = {
-        customer_name: debt.customer_name,
-        total_amount: Number(debt.total_amount),
-        amount_paid: Number(debt.amount_paid),
-        amount_owed: Number(debt.amount_owed),
-        status: debt.status,
+        id: directDebt.id,
+        customer_name: directDebt.customer_name,
+        total_amount: Number(directDebt.total_amount),
+        amount_paid: Number(directDebt.amount_paid),
+        amount_owed: Number(directDebt.amount_owed),
+        status: directDebt.status,
+        is_repayment: false,
+        notes: directDebt.notes,
       };
+    } else {
+      // B. Check if this entry is a debt repayment!
+      const debtIdMatch = entry.item_description?.match(/\[debt:(\d+)\]/i);
+      const remMatch = entry.item_description?.match(/\[rem:(\d+(?:\.\d+)?)\]/i);
+      const isRepaymentDesc = /\bdebt\s+(?:re)?payment\b/i.test(entry.item_description || "");
+
+      let matchedDebt: any = null;
+
+      if (debtIdMatch && debtIdMatch[1]) {
+        const debtId = parseInt(debtIdMatch[1], 10);
+        const { data: d } = await supabase
+          .from("customer_debts")
+          .select("id, customer_name, total_amount, amount_paid, amount_owed, status, notes")
+          .eq("id", debtId)
+          .eq("tenant_id", entry.tenant_id)
+          .maybeSingle();
+        matchedDebt = d;
+      }
+
+      // If no tag or not found by tag, check by customer name if it indicates repayment
+      if (!matchedDebt && (isRepaymentDesc || entry.customer_name)) {
+        const lookupName = entry.customer_name || (() => {
+          const m = entry.item_description?.match(/from\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
+          return m ? m[1].trim() : null;
+        })();
+
+        if (lookupName) {
+          const { data: d } = await supabase
+            .from("customer_debts")
+            .select("id, customer_name, total_amount, amount_paid, amount_owed, status, notes, linked_entry_id")
+            .eq("tenant_id", entry.tenant_id)
+            .ilike("customer_name", `%${lookupName.trim()}%`)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (d && (isRepaymentDesc || d.linked_entry_id !== entry.id)) {
+            matchedDebt = d;
+          }
+        }
+      }
+
+      if (matchedDebt) {
+        const explicitRem = remMatch ? parseFloat(remMatch[1]) : Number(matchedDebt.amount_owed);
+        debtInfo = {
+          id: matchedDebt.id,
+          customer_name: matchedDebt.customer_name,
+          total_amount: Number(matchedDebt.total_amount),
+          amount_paid: Number(matchedDebt.amount_paid),
+          amount_owed: explicitRem,
+          status: matchedDebt.status,
+          is_repayment: true,
+          repayment_balance: explicitRem,
+          notes: matchedDebt.notes,
+        };
+      }
     }
-  } catch {
-    // If customer_debts table is not yet created, proceed without it
+  } catch (err) {
+    console.warn("Could not query customer_debts:", err);
   }
 
   // 4. Resolve customer name
@@ -100,10 +164,21 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
   const businessName = tenant?.business_name || "Merchant";
   const businessPhone = tenant?.whatsapp_number || "";
   const receiptNum = `SPK-${entry.id.toString().padStart(6, "0")}`;
-  const totalAmount = debtInfo ? debtInfo.total_amount : Number(entry.amount);
-  const amountPaid = debtInfo ? debtInfo.amount_paid : Number(entry.amount);
-  const amountOwed = debtInfo ? debtInfo.amount_owed : 0;
-  const isDebt = amountOwed > 0;
+
+  const isRepayment = !!debtInfo?.is_repayment;
+  const isOriginalCreditSale = !isRepayment && !!debtInfo && Number(debtInfo.amount_owed) > 0;
+  const paymentAmount = Number(entry.amount);
+
+  // Accurate balance remaining calculation
+  const remainingBalance = isRepayment
+    ? (debtInfo?.repayment_balance !== undefined ? debtInfo.repayment_balance : (debtInfo?.amount_owed ?? 0))
+    : (debtInfo ? debtInfo.amount_owed : 0);
+
+  const isFullySettled = remainingBalance === 0;
+
+  const totalAmount = isRepayment ? paymentAmount : (debtInfo ? debtInfo.total_amount : paymentAmount);
+  const amountPaid = isRepayment ? paymentAmount : (debtInfo ? debtInfo.amount_paid : paymentAmount);
+
   const rawMethod = entry.payment_method?.trim();
   const paymentMethod =
     rawMethod && rawMethod.toLowerCase() !== "unspecified"
@@ -119,10 +194,16 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
     minute: "2-digit",
   });
 
-  const prodName =
-    (entry.products as unknown as { name: string }[])?.[0]?.name ||
-    entry.item_description ||
-    "Purchased Item";
+  // Strip internal tags like [debt:123] and [rem:45000] for customer display
+  const rawDesc = entry.item_description || "";
+  const cleanedDesc = rawDesc
+    .replace(/\[debt:\d+\]/gi, "")
+    .replace(/\[rem:[\d.]+\]/gi, "")
+    .trim();
+
+  const prodName = isRepayment
+    ? "Debt Repayment on Account"
+    : ((entry.products as unknown as { name: string }[])?.[0]?.name || cleanedDesc || "Purchased Item");
 
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -141,7 +222,7 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
           SparkBooks<span className="text-spark font-normal">.</span>
         </Link>
         <span className="text-[11px] font-medium text-ink-muted bg-white/80 px-2.5 py-1 rounded-full border border-rule/50">
-          Official Digital Receipt
+          {isRepayment ? "Debt Repayment Receipt" : "Official Digital Receipt"}
         </span>
       </div>
 
@@ -189,6 +270,12 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
           )}
           <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-paper border border-rule/80 text-ink-muted">
             <span>Receipt #{receiptNum}</span>
+            {isRepayment && (
+              <>
+                <span>&bull;</span>
+                <span className="text-spark font-bold">REPAYMENT</span>
+              </>
+            )}
             <span>&bull;</span>
             <span>{formattedDate}</span>
           </div>
@@ -204,13 +291,25 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
           </div>
           <div className="text-right">
             <span className="text-ink-muted block text-[11px]">Payment Status</span>
-            {isDebt ? (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+            {isRepayment ? (
+              !isFullySettled ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  PARTIAL REPAYMENT
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  DEBT FULLY SETTLED
+                </span>
+              )
+            ) : isOriginalCreditSale ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                 BALANCE DUE
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 PAID IN FULL
               </span>
@@ -221,63 +320,155 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
         {/* Purchased Items List */}
         <div className="py-5 border-b border-rule/60 space-y-3">
           <div className="flex justify-between text-xs font-semibold text-ink-muted uppercase tracking-wider">
-            <span>Item Description</span>
-            <span>Amount</span>
+            <span>Description</span>
+            <span>{isRepayment ? "Payment Amount" : "Amount"}</span>
           </div>
           <div className="flex justify-between items-baseline pt-1">
             <div className="min-w-0 pr-4">
               <p className="font-medium text-ink text-sm leading-tight">
                 {prodName}
               </p>
-              {paymentMethod && (
+              {isRepayment ? (
+                <p className="text-[11px] text-ink-muted mt-0.5">
+                  {debtInfo?.notes ? `Items: ${debtInfo.notes}` : `Payment credited to customer account`}
+                </p>
+              ) : paymentMethod ? (
                 <p className="text-[11px] text-ink-muted mt-0.5">
                   Channel: {paymentMethod}
                 </p>
-              )}
+              ) : null}
             </div>
             <span className="font-display font-semibold text-base text-ink shrink-0">
-              {nf.format(totalAmount)}
+              {nf.format(paymentAmount)}
             </span>
           </div>
         </div>
 
         {/* Financial Summary Breakdown */}
         <div className="py-4 space-y-2 text-xs">
-          <div className="flex justify-between text-ink-muted">
-            <span>Subtotal</span>
-            <span className="font-medium text-ink">{nf.format(totalAmount)}</span>
-          </div>
+          {isRepayment ? (
+            <>
+              <div className="flex justify-between text-ink-muted">
+                <span>Payment Received (This Receipt)</span>
+                <span className="font-semibold text-ink">{nf.format(paymentAmount)}</span>
+              </div>
 
-          {paymentMethod ? (
-            <div className="flex justify-between text-ink-muted">
-              <span>Payment Method</span>
-              <span className="font-medium text-ink">{paymentMethod}</span>
-            </div>
+              {paymentMethod ? (
+                <div className="flex justify-between text-ink-muted">
+                  <span>Payment Channel</span>
+                  <span className="font-medium text-ink">{paymentMethod}</span>
+                </div>
+              ) : (
+                <div className="flex justify-between text-ink-muted">
+                  <span>Payment Channel</span>
+                  <span className="font-medium text-emerald-700">Direct Payment</span>
+                </div>
+              )}
+
+              {debtInfo && (
+                <>
+                  <div className="flex justify-between text-ink-muted">
+                    <span>Original Debt Total</span>
+                    <span className="font-medium text-ink">{nf.format(debtInfo.total_amount)}</span>
+                  </div>
+                  <div className="flex justify-between text-ink-muted">
+                    <span>Cumulative Paid to Date</span>
+                    <span className="font-semibold text-emerald-700">{nf.format(debtInfo.amount_paid)}</span>
+                  </div>
+                </>
+              )}
+
+              {/* Outstanding Balance Callout Box */}
+              {remainingBalance > 0 ? (
+                <div className="bg-amber-50/90 border border-amber-300/80 rounded-2xl p-3.5 mt-2 space-y-1">
+                  <div className="flex justify-between items-center text-amber-900 font-bold text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                      Remaining Balance Due
+                    </span>
+                    <span className="font-mono text-sm font-extrabold text-amber-900">
+                      {nf.format(remainingBalance)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-snug">
+                    This payment of <strong>{nf.format(paymentAmount)}</strong> was credited to {customerName}&apos;s balance. An outstanding balance of <strong>{nf.format(remainingBalance)}</strong> remains due.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-emerald-50/90 border border-emerald-300/80 rounded-2xl p-3.5 mt-2 space-y-1">
+                  <div className="flex justify-between items-center text-emerald-900 font-bold text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Remaining Balance
+                    </span>
+                    <span className="font-mono text-sm font-extrabold text-emerald-900">
+                      ₦0.00
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 leading-snug font-medium">
+                    🎉 Account fully settled! The customer&apos;s debt has been paid in full with no outstanding balance.
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-2 border-t border-rule/80 flex justify-between items-baseline text-sm font-bold">
+                <span className="text-ink">Payment Credited</span>
+                <span className="text-lg font-display" style={{ color: brandColor }}>
+                  {nf.format(paymentAmount)}
+                </span>
+              </div>
+            </>
           ) : (
-            <div className="flex justify-between text-ink-muted">
-              <span>Payment Status</span>
-              <span className="font-medium text-emerald-700">Direct Payment</span>
-            </div>
+            <>
+              <div className="flex justify-between text-ink-muted">
+                <span>Subtotal</span>
+                <span className="font-medium text-ink">{nf.format(totalAmount)}</span>
+              </div>
+
+              {paymentMethod ? (
+                <div className="flex justify-between text-ink-muted">
+                  <span>Payment Method</span>
+                  <span className="font-medium text-ink">{paymentMethod}</span>
+                </div>
+              ) : (
+                <div className="flex justify-between text-ink-muted">
+                  <span>Payment Status</span>
+                  <span className="font-medium text-emerald-700">Direct Payment</span>
+                </div>
+              )}
+
+              <div className="flex justify-between text-ink-muted">
+                <span>Amount Paid</span>
+                <span className="font-semibold text-emerald-700">{nf.format(amountPaid)}</span>
+              </div>
+
+              {remainingBalance > 0 && (
+                <div className="bg-amber-50/90 border border-amber-300/80 rounded-2xl p-3.5 mt-2 space-y-1">
+                  <div className="flex justify-between items-center text-amber-900 font-bold text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                      Outstanding Balance Due
+                    </span>
+                    <span className="font-mono text-sm font-extrabold text-amber-900">
+                      {nf.format(remainingBalance)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-snug">
+                    Customer paid a deposit of {nf.format(amountPaid)}. The remaining balance of {nf.format(remainingBalance)} is due.
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-2 border-t border-rule/80 flex justify-between items-baseline text-sm font-bold">
+                <span className="text-ink">Total Billed</span>
+                <span className="text-lg font-display" style={{ color: brandColor }}>
+                  {nf.format(totalAmount)}
+                </span>
+              </div>
+            </>
           )}
-
-          <div className="flex justify-between text-ink-muted">
-            <span>Amount Paid</span>
-            <span className="font-semibold text-emerald-700">{nf.format(amountPaid)}</span>
-          </div>
-
-          {isDebt && (
-            <div className="flex justify-between text-amber-800 font-semibold bg-amber-50 p-2.5 rounded-xl border border-amber-200 mt-2">
-              <span>Outstanding Balance</span>
-              <span>{nf.format(amountOwed)}</span>
-            </div>
-          )}
-
-          <div className="pt-2 border-t border-rule/80 flex justify-between items-baseline text-sm font-bold">
-            <span className="text-ink">Total Billed</span>
-            <span className="text-lg font-display" style={{ color: brandColor }}>
-              {nf.format(totalAmount)}
-            </span>
-          </div>
         </div>
 
         {/* Security & Verification Seal */}
@@ -300,9 +491,12 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
         <ReceiptActions
           receiptNumber={receiptNum}
           businessName={businessName}
-          totalFormatted={nf.format(totalAmount)}
+          totalFormatted={nf.format(paymentAmount)}
           receiptUrl={publicReceiptUrl}
           customerName={customerName}
+          isRepayment={isRepayment}
+          remainingBalance={remainingBalance}
+          remainingBalanceFormatted={nf.format(remainingBalance)}
         />
       </div>
 
