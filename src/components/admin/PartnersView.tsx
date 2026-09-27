@@ -224,6 +224,11 @@ export function PartnersView({ partners }: PartnersViewProps) {
                           <span className="w-1.5 h-1.5 rounded-full bg-money" />
                           Active
                         </span>
+                      ) : p.status === "pending" ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          Pending Invite
+                        </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-700">
                           <span className="w-1.5 h-1.5 rounded-full bg-red-500" />

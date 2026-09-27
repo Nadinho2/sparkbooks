@@ -131,7 +131,7 @@ export function PartnerDetailView({ data }: PartnerDetailViewProps) {
                 : "border-money/30 text-money hover:bg-money-light bg-white"
             }`}
           >
-            {status === "active" ? "Suspend BRM" : "Re-activate BRM"}
+            {status === "active" ? "Suspend BRM" : status === "pending" ? "Activate BRM" : "Re-activate BRM"}
           </button>
         </div>
       </div>
@@ -166,6 +166,11 @@ export function PartnerDetailView({ data }: PartnerDetailViewProps) {
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-money-light text-money">
                 <span className="w-1.5 h-1.5 rounded-full bg-money" />
                 Active
+              </span>
+            ) : status === "pending" ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                Pending Invite
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700">

@@ -246,7 +246,7 @@ export async function recruitDownlineBrmAction(input: RecruitDownlineBrmInput): 
       role: "field_agent",
       coordinator_id: coordinator.id,
       region: input.region?.trim() || coordinator.region || null,
-      status: "active",
+      status: "pending",
       updated_at: new Date().toISOString(),
     })
     .select("id, partner_code")

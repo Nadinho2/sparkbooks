@@ -1178,7 +1178,7 @@ export async function createOrPromotePartnerAction(input: {
       role,
       coordinator_id: input.coordinatorId ?? null,
       region: input.region?.trim() || null,
-      status: "active",
+      status: "pending",
       updated_at: new Date().toISOString(),
     },
     { onConflict: "clerk_user_id" }
@@ -1193,7 +1193,10 @@ export async function createOrPromotePartnerAction(input: {
   return { success: true };
 }
 
-export async function updatePartnerStatusAction(partnerId: number, status: "active" | "suspended") {
+export async function updatePartnerStatusAction(
+  partnerId: number,
+  status: "active" | "suspended" | "pending"
+) {
   await requireAdmin();
   const supabase = createAdminClient();
 

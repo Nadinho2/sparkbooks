@@ -106,7 +106,7 @@ export async function requirePartner(): Promise<Partner> {
       const rawPhone = user.phoneNumbers[0]?.phoneNumber;
 
       if (email || rawPhone) {
-        let query = supabase.from("partners").select("*").eq("status", "active");
+        let query = supabase.from("partners").select("*").in("status", ["active", "pending"]);
         if (email && rawPhone) {
           const suffix10 = rawPhone.replace(/\D/g, "").slice(-10);
           query = query.or(`email.ilike.${email},phone_number.ilike.%${suffix10}%`);
@@ -120,11 +120,14 @@ export async function requirePartner(): Promise<Partner> {
         const { data: matched } = await query.limit(1).maybeSingle();
 
         if (matched) {
-          // Link this Clerk user ID to the partner record
+          const newStatus = matched.status === "pending" ? "active" : matched.status;
+
+          // Link Clerk user ID and activate pending invite
           await supabase
             .from("partners")
             .update({
               clerk_user_id: userId,
+              status: newStatus,
               updated_at: new Date().toISOString(),
             })
             .eq("id", matched.id);
@@ -139,12 +142,25 @@ export async function requirePartner(): Promise<Partner> {
             });
           } catch {}
 
-          partnerRow = { ...matched, clerk_user_id: userId };
+          partnerRow = { ...matched, clerk_user_id: userId, status: newStatus };
         }
       }
     } catch (err) {
       console.warn("[requirePartner] Error verifying email/phone partner link:", err);
     }
+  }
+
+  // If partner was already linked but still marked pending, activate upon entering workspace
+  if (partnerRow && partnerRow.status === "pending") {
+    await supabase
+      .from("partners")
+      .update({
+        status: "active",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", partnerRow.id);
+
+    partnerRow.status = "active";
   }
 
   if (partnerRow && partnerRow.status === "active") {
@@ -196,7 +212,7 @@ export async function requirePartner(): Promise<Partner> {
 
 /**
  * Get current partner if available (safe, returns null without redirecting)
- * Also auto-links verified email / phone to the partner record.
+ * Also auto-links verified email / phone to the partner record and activates pending invites.
  */
 export async function getCurrentPartner(): Promise<Partner | null> {
   const { userId } = await auth();
@@ -208,6 +224,18 @@ export async function getCurrentPartner(): Promise<Partner | null> {
     .select("*")
     .eq("clerk_user_id", userId)
     .single();
+
+  if (partnerRow && partnerRow.status === "pending") {
+    await supabase
+      .from("partners")
+      .update({
+        status: "active",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", partnerRow.id);
+
+    partnerRow.status = "active";
+  }
 
   if (partnerRow && partnerRow.status === "active") {
     return mapPartnerRow(partnerRow);
@@ -222,7 +250,7 @@ export async function getCurrentPartner(): Promise<Partner | null> {
     const rawPhone = user.phoneNumbers[0]?.phoneNumber;
 
     if (email || rawPhone) {
-      let query = supabase.from("partners").select("*").eq("status", "active");
+      let query = supabase.from("partners").select("*").in("status", ["active", "pending"]);
       if (email && rawPhone) {
         const suffix10 = rawPhone.replace(/\D/g, "").slice(-10);
         query = query.or(`email.ilike.${email},phone_number.ilike.%${suffix10}%`);
@@ -236,10 +264,13 @@ export async function getCurrentPartner(): Promise<Partner | null> {
       const { data: matched } = await query.limit(1).maybeSingle();
 
       if (matched) {
+        const newStatus = matched.status === "pending" ? "active" : matched.status;
+
         await supabase
           .from("partners")
           .update({
             clerk_user_id: userId,
+            status: newStatus,
             updated_at: new Date().toISOString(),
           })
           .eq("id", matched.id);
@@ -254,7 +285,7 @@ export async function getCurrentPartner(): Promise<Partner | null> {
           });
         } catch {}
 
-        return mapPartnerRow({ ...matched, clerk_user_id: userId });
+        return mapPartnerRow({ ...matched, clerk_user_id: userId, status: newStatus });
       }
     }
   } catch {}
