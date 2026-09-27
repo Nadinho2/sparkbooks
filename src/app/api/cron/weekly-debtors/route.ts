@@ -31,10 +31,11 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createAdminClient();
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL;
   const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://sparkbooks-jade.vercel.app";
+    envUrl && !envUrl.includes("localhost")
+      ? envUrl.replace(/\/$/, "")
+      : "https://sparkbooks-jade.vercel.app";
 
   // Fetch all active, non-suspended tenants with a registered WhatsApp number
   const { data: tenants, error: tenantsError } = await supabase
