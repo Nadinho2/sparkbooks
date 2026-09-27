@@ -27,6 +27,55 @@ export interface TenantData {
   business_name: string;
   business_type: string;
   whatsapp_number: string;
+  brand_color?: string;
+  brand_logo_url?: string | null;
+}
+
+/**
+ * Upload a brand logo during onboarding to the brand-assets storage bucket.
+ */
+export async function uploadOnboardingLogo(
+  formData: FormData,
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const supabase = createAdminClient();
+  const file = formData.get("logo") as File;
+  if (!file) {
+    return { success: false, error: "No image file provided." };
+  }
+
+  if (!file.type.startsWith("image/")) {
+    return { success: false, error: "Please upload an image file (PNG, JPG, WebP, SVG)." };
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    return { success: false, error: "Image size must be less than 5MB." };
+  }
+
+  const ext = file.name.split(".").pop() || "png";
+  const filePath = `onboarding_${userId}_${Date.now()}.${ext}`;
+
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  const { error: uploadErr } = await supabase.storage
+    .from("brand-assets")
+    .upload(filePath, buffer, {
+      contentType: file.type,
+      upsert: true,
+    });
+
+  if (uploadErr) {
+    return { success: false, error: uploadErr.message };
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from("brand-assets")
+    .getPublicUrl(filePath);
+
+  return { success: true, url: publicUrlData.publicUrl };
 }
 
 /**
@@ -42,11 +91,20 @@ export async function getExistingTenant(): Promise<TenantData | null> {
   // 1. Check if user is the tenant owner
   const { data: ownedTenant } = await supabase
     .from("tenants")
-    .select("id, business_name, business_type, whatsapp_number")
+    .select("*")
     .eq("clerk_user_id", userId)
     .maybeSingle();
 
-  if (ownedTenant) return ownedTenant;
+  if (ownedTenant) {
+    return {
+      id: ownedTenant.id,
+      business_name: ownedTenant.business_name,
+      business_type: ownedTenant.business_type,
+      whatsapp_number: ownedTenant.whatsapp_number,
+      brand_color: (ownedTenant as any).brand_color || "#10B981",
+      brand_logo_url: (ownedTenant as any).brand_logo_url || null,
+    };
+  }
 
   // 2. Check for pending team member invitation → auto-activate
   const client = await clerkClient();
@@ -57,7 +115,7 @@ export async function getExistingTenant(): Promise<TenantData | null> {
     const { data: pendingInvite } = await supabase
       .from("tenant_members")
       .select(
-        "id, tenant_id, tenants!tenant_id(id, business_name, business_type, whatsapp_number)",
+        "id, tenant_id, tenants!tenant_id(*)",
       )
       .eq("invited_email", email)
       .eq("status", "pending")
@@ -74,12 +132,7 @@ export async function getExistingTenant(): Promise<TenantData | null> {
         .eq("id", pendingInvite.id);
 
       const tenant = (pendingInvite as unknown as {
-        tenants: {
-          id: number;
-          business_name: string;
-          business_type: string;
-          whatsapp_number: string;
-        } | null;
+        tenants: Record<string, any> | null;
       }).tenants;
 
       if (tenant) {
@@ -88,6 +141,8 @@ export async function getExistingTenant(): Promise<TenantData | null> {
           business_name: tenant.business_name,
           business_type: tenant.business_type,
           whatsapp_number: tenant.whatsapp_number,
+          brand_color: tenant.brand_color || "#10B981",
+          brand_logo_url: tenant.brand_logo_url || null,
         };
       }
     }
@@ -103,21 +158,45 @@ export async function updateTenant(data: {
   businessType: string;
   businessName: string;
   whatsappNumber: string;
+  brandColor?: string | null;
+  brandLogoUrl?: string | null;
 }): Promise<{ success: boolean }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
   const supabase = createAdminClient();
+  const updatePayload: Record<string, any> = {
+    business_name: data.businessName,
+    business_type: data.businessType,
+    whatsapp_number: data.whatsappNumber,
+  };
+
+  if (data.brandColor !== undefined) updatePayload.brand_color = data.brandColor || "#10B981";
+  if (data.brandLogoUrl !== undefined) updatePayload.brand_logo_url = data.brandLogoUrl;
+
   const { error } = await supabase
     .from("tenants")
-    .update({
-      business_name: data.businessName,
-      business_type: data.businessType,
-      whatsapp_number: data.whatsappNumber,
-    })
+    .update(updatePayload)
     .eq("clerk_user_id", userId);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    // If brand columns don't exist yet, fallback to core fields
+    if (error.message?.includes("column") || error.code === "42703") {
+      const { error: fallbackError } = await supabase
+        .from("tenants")
+        .update({
+          business_name: data.businessName,
+          business_type: data.businessType,
+          whatsapp_number: data.whatsappNumber,
+        })
+        .eq("clerk_user_id", userId);
+
+      if (fallbackError) throw new Error(fallbackError.message);
+      return { success: true };
+    }
+    throw new Error(error.message);
+  }
+
   return { success: true };
 }
 
@@ -128,6 +207,8 @@ export async function setupTenant(data: {
   businessType: string;
   businessName: string;
   whatsappNumber: string;
+  brandColor?: string | null;
+  brandLogoUrl?: string | null;
 }): Promise<TenantResult> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
@@ -144,16 +225,41 @@ export async function setupTenant(data: {
     throw new Error("Tenant already exists for this user");
   }
 
-  const { data: tenant, error: tenantError } = await supabase
+  const insertPayload: Record<string, any> = {
+    business_name: data.businessName,
+    business_type: data.businessType,
+    whatsapp_number: data.whatsappNumber,
+    clerk_user_id: userId,
+  };
+  if (data.brandColor) insertPayload.brand_color = data.brandColor;
+  if (data.brandLogoUrl) insertPayload.brand_logo_url = data.brandLogoUrl;
+
+  let tenant: any = null;
+  let tenantError: any = null;
+
+  const res = await supabase
     .from("tenants")
-    .insert({
-      business_name: data.businessName,
-      business_type: data.businessType,
-      whatsapp_number: data.whatsappNumber,
-      clerk_user_id: userId,
-    })
+    .insert(insertPayload)
     .select("id, business_name, business_type, whatsapp_number")
     .single();
+
+  tenant = res.data;
+  tenantError = res.error;
+
+  if (tenantError && (tenantError.message?.includes("column") || tenantError.code === "42703")) {
+    const fallbackRes = await supabase
+      .from("tenants")
+      .insert({
+        business_name: data.businessName,
+        business_type: data.businessType,
+        whatsapp_number: data.whatsappNumber,
+        clerk_user_id: userId,
+      })
+      .select("id, business_name, business_type, whatsapp_number")
+      .single();
+    tenant = fallbackRes.data;
+    tenantError = fallbackRes.error;
+  }
 
   if (tenantError || !tenant) {
     throw new Error(tenantError?.message ?? "Failed to create tenant");

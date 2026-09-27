@@ -27,6 +27,8 @@ export default function OnboardingPage() {
     businessName: string;
     businessType: string;
     whatsappNumber: string;
+    brandColor?: string;
+    brandLogoUrl?: string | null;
   } | null>(null);
   const [productCount, setProductCount] = useState(0);
 
@@ -40,6 +42,8 @@ export default function OnboardingPage() {
           businessName: existing.business_name,
           businessType: existing.business_type,
           whatsappNumber: existing.whatsapp_number,
+          brandColor: existing.brand_color,
+          brandLogoUrl: existing.brand_logo_url,
         });
       }
     });
@@ -51,6 +55,8 @@ export default function OnboardingPage() {
       businessType: string;
       businessName: string;
       whatsappNumber: string;
+      brandColor?: string;
+      brandLogoUrl?: string | null;
     }) => {
       setLoading(true);
       setError(null);
@@ -71,6 +77,8 @@ export default function OnboardingPage() {
           businessName: result.businessName,
           businessType: result.businessType,
           whatsappNumber: result.whatsappNumber,
+          brandColor: data.brandColor,
+          brandLogoUrl: data.brandLogoUrl,
         });
         setStep("products");
       } catch (err) {
@@ -88,12 +96,14 @@ export default function OnboardingPage() {
       businessType: string;
       businessName: string;
       whatsappNumber: string;
+      brandColor?: string;
+      brandLogoUrl?: string | null;
     }) => {
       setLoading(true);
       setError(null);
       try {
         await updateTenant(data);
-        setSuccessMsg("Business details updated.");
+        setSuccessMsg("Business details and branding updated.");
         setTenantInfo(data);
       } catch (err) {
         setError((err as Error).message);
@@ -109,6 +119,8 @@ export default function OnboardingPage() {
       businessType: string;
       businessName: string;
       whatsappNumber: string;
+      brandColor?: string;
+      brandLogoUrl?: string | null;
     }) => {
       if (mode === "edit") {
         handleUpdateTenant(data);
@@ -188,6 +200,8 @@ export default function OnboardingPage() {
                   businessType: tenantInfo.businessType,
                   businessName: tenantInfo.businessName,
                   whatsappNumber: tenantInfo.whatsappNumber,
+                  brandColor: tenantInfo.brandColor,
+                  brandLogoUrl: tenantInfo.brandLogoUrl,
                 }
               : undefined
           }

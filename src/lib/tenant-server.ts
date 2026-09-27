@@ -8,6 +8,8 @@ interface Tenant {
   businessName: string;
   businessType: string;
   whatsappNumber: string;
+  brandLogoUrl: string | null;
+  brandColor: string;
   planTier: PlanTier;
   planStatus: PlanStatus;
   monthlyMessageCount: number;
@@ -24,6 +26,8 @@ function mapTenantRow(data: Record<string, unknown>): Tenant {
     businessName: data.business_name as string,
     businessType: data.business_type as string,
     whatsappNumber: data.whatsapp_number as string,
+    brandLogoUrl: (data.brand_logo_url as string | null) ?? null,
+    brandColor: (data.brand_color as string | null) || "#10B981",
     planTier: data.plan_tier as PlanTier,
     planStatus: data.plan_status as PlanStatus,
     monthlyMessageCount: data.monthly_message_count as number,
@@ -55,9 +59,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
   // 1. Check if user is the tenant owner
   const { data: ownedTenant } = await supabase
     .from("tenants")
-    .select(
-      "id, business_name, business_type, whatsapp_number, plan_tier, plan_status, monthly_message_count, monthly_message_limit, current_period_end, paystack_customer_id, paystack_subscription_id, is_suspended",
-    )
+    .select("*")
     .eq("clerk_user_id", userId)
     .single();
 
@@ -69,9 +71,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
   // 2. Check if user is an active team member
   const { data: membership } = await supabase
     .from("tenant_members")
-    .select(
-      "id, tenant_id, role, clerk_user_id, status, tenants(id, business_name, business_type, whatsapp_number, plan_tier, plan_status, monthly_message_count, monthly_message_limit, current_period_end, paystack_customer_id, paystack_subscription_id, is_suspended)",
-    )
+    .select("id, tenant_id, role, clerk_user_id, status, tenants(*)")
     .eq("clerk_user_id", userId)
     .eq("status", "active")
     .maybeSingle();
@@ -91,9 +91,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
   if (email) {
     const { data: pendingInvite } = await supabase
       .from("tenant_members")
-      .select(
-        "id, tenant_id, tenants(id, business_name, business_type, whatsapp_number, plan_tier, plan_status, monthly_message_count, monthly_message_limit, current_period_end, paystack_customer_id, paystack_subscription_id, is_suspended)",
-      )
+      .select("id, tenant_id, tenants(*)")
       .eq("invited_email", email)
       .eq("status", "pending")
       .maybeSingle();

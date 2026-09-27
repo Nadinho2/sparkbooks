@@ -38,9 +38,12 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
   // 2. Fetch merchant / tenant info
   const { data: tenant } = await supabase
     .from("tenants")
-    .select("id, business_name, whatsapp_number")
+    .select("*")
     .eq("id", entry.tenant_id)
     .single();
+
+  const brandLogoUrl = (tenant as { brand_logo_url?: string | null })?.brand_logo_url ?? null;
+  const brandColor = (tenant as { brand_color?: string | null })?.brand_color || "#10B981";
 
   // 3. Fetch optional linked customer debt / credit info
   let debtInfo: {
@@ -145,15 +148,37 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
       {/* Main Printable Receipt Card */}
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-rule/70 p-6 sm:p-8 relative overflow-hidden print:shadow-none print:border-none print:p-0 print:max-w-none">
         {/* Decorative Top Accent Bar */}
-        <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-money via-spark to-[#25D366] print:hidden" />
+        <div
+          className="absolute top-0 left-0 right-0 h-2 print:hidden"
+          style={{
+            background: `linear-gradient(90deg, ${brandColor}, ${brandColor}dd, #25D366)`,
+          }}
+        />
 
         {/* Header Section */}
         <div className="text-center pb-6 border-b border-dashed border-rule">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-sand border border-rule/80 text-money mb-3 shadow-xs">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-            </svg>
-          </div>
+          {brandLogoUrl ? (
+            <div className="flex justify-center mb-3">
+              <img
+                src={brandLogoUrl}
+                alt={businessName}
+                className="max-h-16 max-w-[150px] object-contain rounded-xl shadow-xs"
+              />
+            </div>
+          ) : (
+            <div
+              className="inline-flex items-center justify-center w-12 h-12 rounded-2xl border mb-3 shadow-xs"
+              style={{
+                backgroundColor: `${brandColor}15`,
+                borderColor: `${brandColor}40`,
+                color: brandColor,
+              }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+              </svg>
+            </div>
+          )}
           <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
             {businessName}
           </h1>
@@ -249,17 +274,25 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
 
           <div className="pt-2 border-t border-rule/80 flex justify-between items-baseline text-sm font-bold">
             <span className="text-ink">Total Billed</span>
-            <span className="text-lg font-display text-money">{nf.format(totalAmount)}</span>
+            <span className="text-lg font-display" style={{ color: brandColor }}>
+              {nf.format(totalAmount)}
+            </span>
           </div>
         </div>
 
         {/* Security & Verification Seal */}
         <div className="mt-4 pt-4 border-t border-dashed border-rule text-center">
-          <div className="inline-flex items-center gap-1.5 text-[11px] text-ink-muted bg-paper px-3 py-1 rounded-full">
-            <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 20 20" fill="currentColor">
+          <div
+            className="inline-flex items-center gap-1.5 text-[11px] px-3.5 py-1 rounded-full font-medium"
+            style={{
+              backgroundColor: `${brandColor}12`,
+              color: brandColor,
+            }}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
             </svg>
-            <span>Verified Transaction &bull; SparkBooks Ledger</span>
+            <span>Verified Transaction &bull; {businessName}</span>
           </div>
         </div>
 

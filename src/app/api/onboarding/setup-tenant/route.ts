@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { businessType, businessName, whatsappNumber } = body;
+  const { businessType, businessName, whatsappNumber, brandColor, brandLogoUrl } = body;
 
   if (!businessType || !businessName || !whatsappNumber) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
@@ -33,16 +33,41 @@ export async function POST(request: Request) {
   }
 
   // Create tenant
-  const { data: tenant, error: tenantError } = await supabase
+  const insertPayload: Record<string, any> = {
+    business_name: businessName,
+    business_type: businessType,
+    whatsapp_number: whatsappNumber,
+    clerk_user_id: userId,
+  };
+  if (brandColor) insertPayload.brand_color = brandColor;
+  if (brandLogoUrl) insertPayload.brand_logo_url = brandLogoUrl;
+
+  let tenant: any = null;
+  let tenantError: any = null;
+
+  const res = await supabase
     .from("tenants")
-    .insert({
-      business_name: businessName,
-      business_type: businessType,
-      whatsapp_number: whatsappNumber,
-      clerk_user_id: userId,
-    })
+    .insert(insertPayload)
     .select("id, business_name, business_type, whatsapp_number")
     .single();
+
+  tenant = res.data;
+  tenantError = res.error;
+
+  if (tenantError && (tenantError.message?.includes("column") || tenantError.code === "42703")) {
+    const fallbackRes = await supabase
+      .from("tenants")
+      .insert({
+        business_name: businessName,
+        business_type: businessType,
+        whatsapp_number: whatsappNumber,
+        clerk_user_id: userId,
+      })
+      .select("id, business_name, business_type, whatsapp_number")
+      .single();
+    tenant = fallbackRes.data;
+    tenantError = fallbackRes.error;
+  }
 
   if (tenantError || !tenant) {
     return NextResponse.json(
