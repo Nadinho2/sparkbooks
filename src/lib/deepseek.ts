@@ -83,6 +83,7 @@ Rules:
 1. ENTRY TYPES:
    - "sale": A completed sale (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000 via OPay transfer", "Sold to Chioma 1 dress 30k cash").
      'amount' is the TOTAL revenue in Naira.
+     'customer_name' is the customer/buyer's name if mentioned (e.g. "Sold to Chioma 1 dress 30k" -> customer_name="Chioma", "Sold 1 wig to Sarah for 50k" -> customer_name="Sarah"). If no buyer is mentioned, customer_name=null.
    - "debt": A sale where the customer made a partial payment or bought on credit (e.g. "Sold 1 bone straight 100k to Blessing, she paid 60k balance 40k", "Sold 2 closure to Amaka for 50k on credit", "Gave Tunde 2 items for 30k, paid half 15k").
      'amount' is the TOTAL sale value (e.g. 100000).
      'amount_paid' is what was paid right now (e.g. 60000). If zero paid, amount_paid=0.
@@ -119,7 +120,17 @@ Rules:
 4. NUMBERS AND CURRENCY:
    - Recognize Nigerian abbreviations: 'k' = thousand (20k = 20000, 100k = 100000), 'm' = million (1m = 1000000).
    - All amounts and costs must be plain integers in NGN (Naira).
-   - Never guess an amount or quantity that was not stated or clearly implied.`;
+   - Never guess an amount or quantity that was not stated or clearly implied.
+
+5. CUSTOMER EXTRACTION:
+   - ALWAYS extract 'customer_name' whenever a customer, buyer, or person receiving goods or making a payment is mentioned in ANY message.
+   - Examples:
+     - "Sold 1 wig to Amaka for 80k" -> customer_name="Amaka"
+     - "Sold to Sarah 2 bags 30k" -> customer_name="Sarah"
+     - "Sold 1 wig 100k to Blessing, paid 60k balance 40k" -> customer_name="Blessing"
+     - "Blessing paid 40k balance" -> customer_name="Blessing"
+   - Do NOT confuse product names with customer names (e.g. "Bone Straight" is product, "Amaka" is customer).
+   - If no customer is mentioned, set customer_name=null.`;
 }
 
 /**

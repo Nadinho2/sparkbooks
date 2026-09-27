@@ -7,6 +7,7 @@ interface ReceiptActionsProps {
   businessName: string;
   totalFormatted: string;
   receiptUrl: string;
+  customerName?: string | null;
 }
 
 export function ReceiptActions({
@@ -14,6 +15,7 @@ export function ReceiptActions({
   businessName,
   totalFormatted,
   receiptUrl,
+  customerName,
 }: ReceiptActionsProps) {
   const [copied, setCopied] = useState(false);
 
@@ -35,8 +37,9 @@ export function ReceiptActions({
     }
   };
 
+  const greeting = customerName ? `Hello ${customerName}!` : "Hello!";
   const waShareText = encodeURIComponent(
-    `Hello! Here is your official payment receipt #${receiptNumber} (${totalFormatted}) from *${businessName}*:\n\n${receiptUrl}\n\nThank you for your business! 🙏`
+    `${greeting} Here is your official payment receipt #${receiptNumber} (${totalFormatted}) from *${businessName}*:\n\n${receiptUrl}\n\nThank you for your business! 🙏`
   );
   const waShareUrl = `https://wa.me/?text=${waShareText}`;
 

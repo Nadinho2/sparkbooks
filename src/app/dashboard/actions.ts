@@ -14,6 +14,7 @@ export interface LedgerEntryItem {
   productId: number | null;
   productName: string | null;
   paymentMethod: string | null;
+  customerName: string | null;
   source: "whatsapp_voice" | "whatsapp_text" | "dashboard_manual";
   confidenceScore: number | null;
   createdAt: string;
@@ -37,7 +38,7 @@ export async function fetchDashboardOverview(): Promise<DashboardOverviewData> {
   const [entriesRes, productsRes] = await Promise.all([
     supabase
       .from("ledger_entries")
-      .select("id, type, amount, item_description, product_id, payment_method, source, confidence_score, created_at, products(name)")
+      .select("id, type, amount, item_description, product_id, payment_method, customer_name, source, confidence_score, created_at, products(name)")
       .eq("tenant_id", tenantId)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -55,6 +56,7 @@ export async function fetchDashboardOverview(): Promise<DashboardOverviewData> {
 
   const entries: LedgerEntryItem[] = (entriesRes.data ?? []).map((row) => {
     const prodObj = (row.products as unknown as { name: string }[])?.[0] ?? null;
+    const r = row as { payment_method?: string | null; customer_name?: string | null };
     return {
       id: row.id,
       type: row.type as "sale" | "expense",
@@ -62,7 +64,8 @@ export async function fetchDashboardOverview(): Promise<DashboardOverviewData> {
       itemDescription: row.item_description,
       productId: row.product_id,
       productName: prodObj?.name ?? null,
-      paymentMethod: (row as { payment_method?: string | null }).payment_method ?? "transfer",
+      paymentMethod: r.payment_method ?? "transfer",
+      customerName: r.customer_name ?? null,
       source: row.source as "whatsapp_voice" | "whatsapp_text" | "dashboard_manual",
       confidenceScore: row.confidence_score != null ? Number(row.confidence_score) : null,
       createdAt: row.created_at,
@@ -88,6 +91,7 @@ export async function createManualLedgerEntry(data: {
   productId?: number | null;
   quantity?: number | null;
   paymentMethod?: string | null;
+  customerName?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
@@ -113,6 +117,7 @@ export async function createManualLedgerEntry(data: {
       item_description: data.itemDescription.trim(),
       product_id: data.productId ?? null,
       payment_method: data.paymentMethod || "transfer",
+      customer_name: data.customerName?.trim() || null,
       source: "dashboard_manual",
       confidence_score: 1.0,
     })

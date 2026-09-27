@@ -816,6 +816,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           amount: payment,
           item_description: `Debt repayment from ${debtor.customer_name}`,
           payment_method: method,
+          customer_name: debtor.customer_name,
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linked_message_id: waMsg.id,
           confidence_score: confidence,
@@ -844,6 +845,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           amount: payment,
           item_description: custName ? `Payment received from ${custName}` : "Customer payment",
           payment_method: method,
+          customer_name: custName || null,
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linked_message_id: waMsg.id,
           confidence_score: confidence,
@@ -911,6 +913,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           : `Sale to ${customerName}`,
         product_id: productId,
         payment_method: method,
+        customer_name: customerName,
         source: isVoice ? "whatsapp_voice" : "whatsapp_text",
         linked_message_id: waMsg.id,
         confidence_score: confidence,
@@ -1151,15 +1154,19 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       }
     }
 
+    const custName = (parsed.customer_name || "").trim() || null;
     const { data: ledger } = await supabase
       .from("ledger_entries")
       .insert({
         tenant_id: tenant.id,
         type: "sale",
         amount,
-        item_description: productName ? `Sold ${qty} ${unit} of ${productName}` : "Sale",
+        item_description: productName
+          ? (custName ? `Sold ${qty} ${unit} of ${productName} to ${custName}` : `Sold ${qty} ${unit} of ${productName}`)
+          : (custName ? `Sale to ${custName}` : "Sale"),
         product_id: productId,
         payment_method: method,
+        customer_name: custName,
         source: isVoice ? "whatsapp_voice" : "whatsapp_text",
         linked_message_id: waMsg.id,
         confidence_score: confidence,
@@ -1190,7 +1197,10 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .eq("id", waMsg.id);
 
     const receiptUrl = ledger?.id ? getReceiptUrl(ledger.id) : null;
-    let reply = `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) via ${method.toUpperCase()}.`;
+    let reply = custName
+      ? `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) to *${custName}* via ${method.toUpperCase()}.`
+      : `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) via ${method.toUpperCase()}.`;
+
     if (receiptUrl) {
       reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;
     }

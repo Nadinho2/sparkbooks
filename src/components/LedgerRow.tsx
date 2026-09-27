@@ -6,6 +6,7 @@ interface LedgerRowProps {
   amount: number;
   direction: "in" | "out";
   paymentMethod?: string | null;
+  customerName?: string | null;
   receiptId?: number;
   source?: "whatsapp_voice" | "whatsapp_text" | "dashboard_manual";
   isLast?: boolean;
@@ -18,6 +19,7 @@ export function LedgerRow({
   amount,
   direction,
   paymentMethod,
+  customerName,
   receiptId,
   source,
   isLast,
@@ -35,6 +37,11 @@ export function LedgerRow({
       <div className="flex flex-col min-w-0 mr-3">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-sm font-medium text-ink truncate">{title}</span>
+          {customerName && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sand border border-rule/60 text-ink">
+              👤 {customerName}
+            </span>
+          )}
           {method && method !== "other" && (
             <span
               className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${

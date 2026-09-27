@@ -27,7 +27,7 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
   // 1. Fetch ledger entry
   const { data: entry, error } = await supabase
     .from("ledger_entries")
-    .select("id, tenant_id, type, amount, item_description, payment_method, product_id, created_at, products(name, unit)")
+    .select("id, tenant_id, type, amount, item_description, payment_method, customer_name, customer_phone, product_id, created_at, products(name, unit)")
     .eq("id", entryId)
     .maybeSingle();
 
@@ -70,6 +70,22 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
     }
   } catch {
     // If customer_debts table is not yet created, proceed without it
+  }
+
+  // 4. Resolve customer name
+  const entryCustomer = (entry as { customer_name?: string | null })?.customer_name;
+  let customerName = debtInfo?.customer_name || entryCustomer || null;
+
+  // Fallback: If not explicitly saved in column, check item_description for "to [Name]" or "from [Name]"
+  if (!customerName && entry.item_description) {
+    const toMatch = entry.item_description.match(/\b(?:to|from)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b/i);
+    if (toMatch && toMatch[1]) {
+      const candidate = toMatch[1].trim();
+      const forbidden = ["transfer", "cash", "pos", "bank", "store", "shop", "me", "him", "her", "them", "sale"];
+      if (!forbidden.includes(candidate.toLowerCase())) {
+        customerName = candidate;
+      }
+    }
   }
 
   const nf = new Intl.NumberFormat("en-NG", {
@@ -154,7 +170,7 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
           <div>
             <span className="text-ink-muted block text-[11px]">Billed To</span>
             <span className="font-semibold text-ink text-sm">
-              {debtInfo?.customer_name || "Valued Customer"}
+              {customerName || "Valued Customer"}
             </span>
           </div>
           <div className="text-right">
@@ -240,6 +256,7 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
           businessName={businessName}
           totalFormatted={nf.format(totalAmount)}
           receiptUrl={publicReceiptUrl}
+          customerName={customerName}
         />
       </div>
 

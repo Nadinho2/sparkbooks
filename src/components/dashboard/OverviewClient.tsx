@@ -48,6 +48,7 @@ export function OverviewClient({
   const [formProductId, setFormProductId] = useState<string>("");
   const [formQty, setFormQty] = useState("1");
   const [formPaymentMethod, setFormPaymentMethod] = useState("transfer");
+  const [formCustomerName, setFormCustomerName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   // Filter entries by date period
@@ -193,6 +194,7 @@ export function OverviewClient({
         productId: selectedProd,
         quantity: qty,
         paymentMethod: formPaymentMethod,
+        customerName: formCustomerName || null,
       });
 
       if (!res.success) {
@@ -207,6 +209,7 @@ export function OverviewClient({
           productId: selectedProd,
           productName: products.find((p) => p.id === selectedProd)?.name ?? null,
           paymentMethod: formPaymentMethod,
+          customerName: formCustomerName.trim() || null,
           source: "dashboard_manual",
           confidenceScore: 1.0,
           createdAt: new Date().toISOString(),
@@ -218,6 +221,7 @@ export function OverviewClient({
         setFormProductId("");
         setFormQty("1");
         setFormPaymentMethod("transfer");
+        setFormCustomerName("");
       }
     });
   };
@@ -238,11 +242,12 @@ export function OverviewClient({
 
   // Export to CSV
   const handleExportCsv = () => {
-    const headers = ["Date", "Type", "Description", "Product", "Payment Method", "Amount (NGN)", "Source"];
+    const headers = ["Date", "Type", "Description", "Customer", "Product", "Payment Method", "Amount (NGN)", "Source"];
     const rows = displayedEntries.map((e) => [
       new Date(e.createdAt).toLocaleDateString("en-NG"),
       e.type.toUpperCase(),
       `"${e.itemDescription.replace(/"/g, '""')}"`,
+      `"${(e.customerName ?? "").replace(/"/g, '""')}"`,
       `"${(e.productName ?? "").replace(/"/g, '""')}"`,
       (e.paymentMethod || "transfer").toUpperCase(),
       e.amount.toFixed(2),
@@ -522,6 +527,7 @@ export function OverviewClient({
                   amount={entry.amount}
                   direction={entry.type === "sale" ? "in" : "out"}
                   paymentMethod={entry.paymentMethod}
+                  customerName={entry.customerName}
                   receiptId={entry.type === "sale" ? entry.id : undefined}
                   source={entry.source}
                   isLast={index === displayedEntries.length - 1}
@@ -577,6 +583,22 @@ export function OverviewClient({
                   - Expense (Cost)
                 </button>
               </div>
+
+              {/* Customer Name */}
+              {formType === "sale" && (
+                <div>
+                  <label className="block text-xs font-medium text-ink mb-1">
+                    Customer Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Amaka, Mrs Ade, John"
+                    value={formCustomerName}
+                    onChange={(e) => setFormCustomerName(e.target.value)}
+                    className="w-full text-xs px-3 py-2 border border-rule rounded-lg focus:outline-none focus:border-spark"
+                  />
+                </div>
+              )}
 
               {/* Description */}
               <div>
