@@ -1,4 +1,4 @@
-import { getCurrentTenant } from "@/lib/tenant-server";
+import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { fetchDashboardOverview } from "./actions";
 import { OverviewClient } from "@/components/dashboard/OverviewClient";
 
@@ -9,6 +9,7 @@ export const metadata = {
 
 export default async function DashboardPage() {
   const tenant = await getCurrentTenant();
+  const isOwner = await isTenantOwner();
   const { entries, products } = await fetchDashboardOverview();
 
   return (
@@ -19,6 +20,7 @@ export default async function DashboardPage() {
       monthlyMessageLimit={tenant.monthlyMessageLimit}
       initialEntries={entries}
       products={products}
+      isOwner={isOwner}
     />
   );
 }

@@ -62,10 +62,45 @@ export function MessageBubble({ message, linkedEntries }: MessageBubbleProps) {
         <div
           className={`relative rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
             isInbound
-              ? "bg-white text-ink rounded-tl-sm border border-rule/60"
-              : "bg-[#DCF8C6] text-ink rounded-tr-sm"
+              ? "bg-white text-ink rounded-tl-sm border border-rule/60 shadow-2xs"
+              : "bg-[#DCF8C6] text-ink rounded-tr-sm shadow-2xs"
           }`}
         >
+          {/* Sender Header: Name, Username, Email, and Role Badge */}
+          <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-rule/40 text-[11px] leading-tight">
+            <span className="font-semibold text-ink truncate max-w-[130px] sm:max-w-[160px]">
+              {message.senderName || (isInbound ? "Store Staff" : "SparkBooks AI Bot")}
+            </span>
+
+            {message.senderUsername && (
+              <span className="text-spark font-medium truncate max-w-[100px] text-[10px]">
+                {message.senderUsername}
+              </span>
+            )}
+
+            {message.senderEmail && (
+              <span className="text-ink-muted/80 text-[10px] truncate max-w-[160px] hidden sm:inline">
+                &bull; {message.senderEmail}
+              </span>
+            )}
+
+            <span
+              className={`ml-auto shrink-0 text-[9px] font-bold px-1.5 py-0.2 rounded-full uppercase tracking-wider ${
+                message.senderRole === "owner"
+                  ? "bg-amber-100 text-amber-800 border border-amber-200"
+                  : message.senderRole === "bot"
+                    ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                    : "bg-blue-100 text-blue-800 border border-blue-200"
+              }`}
+            >
+              {message.senderRole === "owner"
+                ? "Owner"
+                : message.senderRole === "bot"
+                  ? "Bot"
+                  : "Staff"}
+            </span>
+          </div>
+
           {/* Status flag dot */}
           {needsAttention && (
             <span
@@ -87,7 +122,7 @@ export function MessageBubble({ message, linkedEntries }: MessageBubbleProps) {
           )}
         </div>
 
-        {/* Meta row: timestamp + status + sender */}
+        {/* Meta row: timestamp + status */}
         <div
           className={`flex items-center gap-1.5 mt-1 px-1 ${
             isInbound ? "justify-start" : "justify-end"
@@ -96,9 +131,9 @@ export function MessageBubble({ message, linkedEntries }: MessageBubbleProps) {
           <span className="text-[10px] text-ink-muted/70">
             {format(timestamp, "HH:mm")}
           </span>
-          {message.senderName && (
-            <span className="text-[10px] text-ink-muted/70">
-              &middot; {message.senderName}
+          {message.senderEmail && (
+            <span className="sm:hidden text-[10px] text-ink-muted/60 truncate max-w-[150px]">
+              &middot; {message.senderEmail}
             </span>
           )}
           {isVoice && (

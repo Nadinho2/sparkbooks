@@ -32,12 +32,14 @@ interface ProductTableProps {
   products: ProductRow[];
   categories: Category[];
   tenantId: number;
+  isOwner?: boolean;
 }
 
 export function ProductTable({
   products,
   categories,
   tenantId,
+  isOwner = true,
 }: ProductTableProps) {
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<ProductRow | null>(null);
@@ -414,15 +416,17 @@ export function ProductTable({
                       >
                         Edit
                       </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleting(p);
-                        }}
-                        className="text-xs text-rose-600 hover:text-rose-700"
-                      >
-                        Delete
-                      </button>
+                      {isOwner && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleting(p);
+                          }}
+                          className="text-xs text-rose-600 hover:text-rose-700"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -501,15 +505,17 @@ export function ProductTable({
                 >
                   Edit
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleting(p);
-                  }}
-                  className="text-xs text-flag hover:opacity-80"
-                >
-                  Delete
-                </button>
+                {isOwner && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleting(p);
+                    }}
+                    className="text-xs text-flag hover:opacity-80"
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           </div>

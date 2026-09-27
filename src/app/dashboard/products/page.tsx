@@ -1,9 +1,10 @@
-import { getCurrentTenant } from "@/lib/tenant-server";
+import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ProductTable, type ProductRow, type Category } from "@/components/dashboard/ProductTable";
 
 export default async function ProductsPage() {
   const tenant = await getCurrentTenant();
+  const isOwner = await isTenantOwner();
   const supabase = createAdminClient();
 
   // Fetch non-deleted products with category names
@@ -133,6 +134,7 @@ export default async function ProductsPage() {
       products={rows}
       categories={categories}
       tenantId={tenant.id}
+      isOwner={isOwner}
     />
   );
 }

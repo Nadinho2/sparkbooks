@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import type { SenderProfile } from "@/app/dashboard/messages/actions";
 
 export interface ChatFilterValues {
   status: string;
   search: string;
+  senderId: string;
   afterDate: string;
   beforeDate: string;
 }
 
 interface ChatFiltersProps {
+  senders?: SenderProfile[];
   onChange: (filters: ChatFilterValues) => void;
 }
 
@@ -21,15 +24,16 @@ const STATUS_OPTIONS = [
   { value: "unmatched", label: "Unmatched" },
 ];
 
-export function ChatFilters({ onChange }: ChatFiltersProps) {
+export function ChatFilters({ senders = [], onChange }: ChatFiltersProps) {
   const [status, setStatus] = useState("all");
   const [search, setSearch] = useState("");
+  const [senderId, setSenderId] = useState("all");
   const [afterDate, setAfterDate] = useState("");
   const [beforeDate, setBeforeDate] = useState("");
   const [showFilters, setShowFilters] = useState(false);
 
   function emit(next: Partial<ChatFilterValues>) {
-    const merged = { status, search, afterDate, beforeDate, ...next };
+    const merged = { status, search, senderId, afterDate, beforeDate, ...next };
     onChange(merged);
   }
 
@@ -66,11 +70,29 @@ export function ChatFilters({ onChange }: ChatFiltersProps) {
             setStatus(e.target.value);
             emit({ status: e.target.value });
           }}
-          className="border border-rule rounded-lg px-2 sm:px-3 py-1.5 text-sm text-ink outline-none focus:border-spark transition-colors bg-white shrink-0"
+          className="border border-rule rounded-lg px-2 sm:px-3 py-1.5 text-xs sm:text-sm text-ink outline-none focus:border-spark transition-colors bg-white shrink-0"
         >
           {STATUS_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
+            </option>
+          ))}
+        </select>
+
+        {/* Sender filter */}
+        <select
+          value={senderId}
+          onChange={(e) => {
+            setSenderId(e.target.value);
+            emit({ senderId: e.target.value });
+          }}
+          className="border border-rule rounded-lg px-2 sm:px-3 py-1.5 text-xs sm:text-sm text-ink outline-none focus:border-spark transition-colors bg-white shrink-0 max-w-[130px] sm:max-w-[210px] truncate"
+          title="Filter by sender"
+        >
+          <option value="all">All Senders</option>
+          {senders.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} {s.username ? `(${s.username})` : s.email ? `(${s.email})` : `(${s.role})`}
             </option>
           ))}
         </select>

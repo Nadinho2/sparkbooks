@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getCurrentTenantId } from "@/lib/tenant-server";
+import { getCurrentTenantId, isTenantOwner } from "@/lib/tenant-server";
 import { revalidatePath } from "next/cache";
 import { updateProductStock } from "@/lib/stock";
 
@@ -156,6 +156,11 @@ export async function createManualLedgerEntry(data: {
 export async function deleteLedgerEntry(entryId: number): Promise<{ success: boolean; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
+
+  const isOwner = await isTenantOwner();
+  if (!isOwner) {
+    return { success: false, error: "Only the account owner can delete ledger entries." };
+  }
 
   const tenantId = await getCurrentTenantId();
   const supabase = createAdminClient();

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { getCurrentTenant } from "@/lib/tenant-server";
+import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { SignOutButton } from "@/components/ui/SignOutButton";
 import { getWhatsAppBotUrl } from "@/lib/whatsapp";
 import { DashboardNav } from "@/components/dashboard/DashboardNav";
@@ -11,6 +11,7 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const tenant = await getCurrentTenant();
+  const isOwner = await isTenantOwner();
 
   const { userId } = await auth();
   let email: string | null = null;
@@ -29,9 +30,13 @@ export default async function DashboardLayout({
     { href: "/dashboard/products", label: "Products" },
     { href: "/dashboard/debts", label: "Debts & Credit" },
     { href: "/dashboard/messages", label: "Messages" },
-    { href: "/dashboard/team", label: "Team" },
-    { href: "/dashboard/billing", label: "Billing" },
-    { href: "/dashboard/settings", label: "Settings" },
+    ...(isOwner
+      ? [
+          { href: "/dashboard/team", label: "Team" },
+          { href: "/dashboard/billing", label: "Billing" },
+          { href: "/dashboard/settings", label: "Settings" },
+        ]
+      : []),
   ];
 
   return (
@@ -45,6 +50,11 @@ export default async function DashboardLayout({
             </Link>
             <div className="flex items-center gap-1.5 sm:gap-2 text-xs text-ink-muted border-l border-rule pl-2.5 sm:pl-3 min-w-0">
               <span className="truncate max-w-[120px] sm:max-w-[200px] font-medium text-ink-muted">{tenant.businessName}</span>
+              <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                isOwner ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-blue-100 text-blue-800 border border-blue-200"
+              }`}>
+                {isOwner ? "Owner" : "Staff"}
+              </span>
               {email && (
                 <>
                   <span className="text-rule shrink-0 hidden sm:inline">|</span>

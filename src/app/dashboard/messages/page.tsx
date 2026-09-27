@@ -41,6 +41,7 @@ export default async function MessagesPage() {
         initialMessages={result.messages}
         initialHasMore={result.hasMore}
         initialNextCursor={result.nextCursor}
+        initialSenders={result.senders}
       />
     </div>
   );

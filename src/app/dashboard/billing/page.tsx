@@ -1,13 +1,19 @@
-import { getCurrentTenant } from "@/lib/tenant-server";
+import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { BillingClient } from "@/components/dashboard/BillingClient";
 import { BackButton } from "@/components/ui/BackButton";
 import { getBillingState, getPaymentHistory } from "./actions";
+import { redirect } from "next/navigation";
 
 export const metadata = {
   title: "Billing – SparkBooks",
 };
 
 export default async function BillingPage() {
+  const isOwner = await isTenantOwner();
+  if (!isOwner) {
+    redirect("/dashboard");
+  }
+
   const tenant = await getCurrentTenant();
   const billing = await getBillingState(tenant.id);
   const { transactions } = await getPaymentHistory(tenant.id);

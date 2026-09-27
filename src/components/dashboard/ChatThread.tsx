@@ -11,6 +11,7 @@ import { format, isSameDay } from "date-fns";
 import type {
   MessageRow,
   LinkedEntry,
+  SenderProfile,
 } from "@/app/dashboard/messages/actions";
 import { fetchMessages, fetchLinkedEntries } from "@/app/dashboard/messages/actions";
 import { MessageBubble } from "./MessageBubble";
@@ -23,6 +24,7 @@ interface ChatThreadProps {
   initialMessages: MessageRow[];
   initialHasMore: boolean;
   initialNextCursor: number | null;
+  initialSenders?: SenderProfile[];
 }
 
 export function ChatThread({
@@ -31,6 +33,7 @@ export function ChatThread({
   initialMessages,
   initialHasMore,
   initialNextCursor,
+  initialSenders = [],
 }: ChatThreadProps) {
   const [messages, setMessages] = useState<MessageRow[]>(initialMessages);
   const [linkedEntries, setLinkedEntries] = useState<
@@ -42,6 +45,7 @@ export function ChatThread({
   const [filters, setFilters] = useState<ChatFilterValues>({
     status: "all",
     search: "",
+    senderId: "all",
     afterDate: "",
     beforeDate: "",
   });
@@ -102,6 +106,7 @@ export function ChatThread({
         tenantId,
         status: newFilters.status !== "all" ? newFilters.status : undefined,
         search: newFilters.search || undefined,
+        senderId: newFilters.senderId !== "all" ? newFilters.senderId : undefined,
         afterDate: newFilters.afterDate || undefined,
         beforeDate: newFilters.beforeDate
           ? `${newFilters.beforeDate}T23:59:59`
@@ -137,6 +142,7 @@ export function ChatThread({
       tenantId,
       status: filters.status !== "all" ? filters.status : undefined,
       search: filters.search || undefined,
+      senderId: filters.senderId !== "all" ? filters.senderId : undefined,
       afterDate: filters.afterDate || undefined,
       beforeDate: filters.beforeDate
         ? `${filters.beforeDate}T23:59:59`
@@ -207,7 +213,7 @@ export function ChatThread({
   return (
     <div className="bg-white rounded-xl border border-rule overflow-hidden flex flex-col h-[calc(100vh-160px)] sm:h-[calc(100vh-140px)]">
       {/* Filters */}
-      <ChatFilters onChange={handleFilterChange} />
+      <ChatFilters senders={initialSenders} onChange={handleFilterChange} />
 
       {/* Message list */}
       <div

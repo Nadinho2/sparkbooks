@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { updateProductStock } from "@/lib/stock";
 import { checkProductLimit } from "@/lib/billing-server";
 import { findFuzzyMatches } from "@/lib/tenant";
-import { getCurrentTenantId } from "@/lib/tenant-server";
+import { getCurrentTenantId, isTenantOwner } from "@/lib/tenant-server";
 
 export type EditProductData = {
   id: number;
@@ -143,6 +143,9 @@ export async function softDeleteProduct(
 ): Promise<void> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
+
+  const isOwner = await isTenantOwner();
+  if (!isOwner) throw new Error("Only the account owner can delete products from the catalog.");
 
   const tenantId = await getCurrentTenantId();
 

@@ -1,6 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { getCurrentTenant } from "@/lib/tenant-server";
+import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { SettingsView } from "@/components/dashboard/SettingsView";
+import { redirect } from "next/navigation";
 
 export const metadata = {
   title: "Settings – SparkBooks",
@@ -8,6 +9,11 @@ export const metadata = {
 };
 
 export default async function SettingsPage() {
+  const isOwner = await isTenantOwner();
+  if (!isOwner) {
+    redirect("/dashboard");
+  }
+
   const tenant = await getCurrentTenant();
 
   const { userId } = await auth();

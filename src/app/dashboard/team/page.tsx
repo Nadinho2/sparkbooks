@@ -2,15 +2,20 @@ import Link from "next/link";
 import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { fetchTeamMembers } from "./actions";
 import { TeamView } from "@/components/dashboard/TeamView";
+import { redirect } from "next/navigation";
 
 export const metadata = {
   title: "Team – SparkBooks",
 };
 
 export default async function TeamPage() {
+  const owner = await isTenantOwner();
+  if (!owner) {
+    redirect("/dashboard");
+  }
+
   const tenant = await getCurrentTenant();
   const members = await fetchTeamMembers();
-  const owner = await isTenantOwner();
 
   return (
     <div>

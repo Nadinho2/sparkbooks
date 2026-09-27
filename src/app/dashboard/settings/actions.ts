@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getCurrentTenantId } from "@/lib/tenant-server";
+import { getCurrentTenantId, isTenantOwner } from "@/lib/tenant-server";
 import { revalidatePath } from "next/cache";
 
 export async function uploadBrandLogo(
@@ -10,6 +10,9 @@ export async function uploadBrandLogo(
 ): Promise<{ success: boolean; url?: string; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
+
+  const isOwner = await isTenantOwner();
+  if (!isOwner) throw new Error("Only the store owner can upload brand assets.");
 
   const tenantId = await getCurrentTenantId();
   const supabase = createAdminClient();
@@ -73,6 +76,9 @@ export async function updateBusinessSettings(data: {
 }): Promise<{ success: boolean; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
+
+  const isOwner = await isTenantOwner();
+  if (!isOwner) return { success: false, error: "Only the store owner can update business settings." };
 
   const tenantId = await getCurrentTenantId();
   const supabase = createAdminClient();

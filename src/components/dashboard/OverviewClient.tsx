@@ -20,6 +20,7 @@ interface OverviewClientProps {
   monthlyMessageLimit: number;
   initialEntries: LedgerEntryItem[];
   products: ProductOption[];
+  isOwner?: boolean;
 }
 
 type Period = "today" | "week" | "month" | "all";
@@ -32,6 +33,7 @@ export function OverviewClient({
   monthlyMessageLimit,
   initialEntries,
   products,
+  isOwner = true,
 }: OverviewClientProps) {
   const [entries, setEntries] = useState<LedgerEntryItem[]>(initialEntries);
   const [period, setPeriod] = useState<Period>("month");
@@ -531,7 +533,7 @@ export function OverviewClient({
                   receiptId={entry.type === "sale" ? entry.id : undefined}
                   source={entry.source}
                   isLast={index === displayedEntries.length - 1}
-                  onDelete={() => handleDelete(entry.id)}
+                  onDelete={isOwner ? () => handleDelete(entry.id) : undefined}
                 />
               );
             })}

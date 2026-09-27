@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { PlanTier } from "@/lib/billing";
 import { getPlanLimits } from "@/lib/billing";
-import { getCurrentTenantId } from "@/lib/tenant-server";
+import { getCurrentTenantId, isTenantOwner } from "@/lib/tenant-server";
 import {
   createPaystackCustomer,
   createPaystackSubscription,
@@ -86,6 +86,9 @@ export async function startSubscription(
 ): Promise<{ authorizationUrl: string } | { error: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
+
+  const isOwner = await isTenantOwner();
+  if (!isOwner) throw new Error("Only the store owner can manage billing subscriptions.");
 
   const tenantId = await getCurrentTenantId();
 
@@ -175,6 +178,9 @@ export async function cancelSubscription(
 ): Promise<{ success: boolean; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
+
+  const isOwner = await isTenantOwner();
+  if (!isOwner) throw new Error("Only the store owner can cancel billing subscriptions.");
 
   const tenantId = await getCurrentTenantId();
   if (clientTenantId && clientTenantId !== tenantId) {
