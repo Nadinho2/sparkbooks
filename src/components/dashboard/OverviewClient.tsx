@@ -541,8 +541,8 @@ export function OverviewClient({
 
       {/* Manual Transaction Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-rule relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200/90 relative ring-1 ring-black/5 my-auto animate-in zoom-in-95 duration-150">
             <button
               onClick={() => setIsModalOpen(false)}
               className="absolute top-4 right-4 text-ink-muted hover:text-ink text-sm"
@@ -711,8 +711,8 @@ export function OverviewClient({
 
       {/* Formal P&L Statement Modal */}
       {isPlModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-2xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-rule relative animate-in fade-in zoom-in-95 my-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200/90 relative ring-1 ring-black/5 animate-in zoom-in-95 my-8">
             <button
               onClick={() => setIsPlModalOpen(false)}
               className="absolute top-5 right-5 text-ink-muted hover:text-ink text-sm p-1 rounded-lg hover:bg-paper print:hidden"

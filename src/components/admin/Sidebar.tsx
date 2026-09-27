@@ -25,7 +25,7 @@ export function AdminSidebar({ navItems }: { navItems: NavItem[] }) {
       {/* Mobile overlay */}
       {open && (
         <div
-          className="fixed inset-0 bg-black/30 z-40 lg:hidden"
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 lg:hidden animate-in fade-in duration-150"
           onClick={() => setOpen(false)}
         />
       )}

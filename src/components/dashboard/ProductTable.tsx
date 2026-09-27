@@ -559,8 +559,8 @@ export function ProductTable({
 
       {/* Delete confirmation */}
       {deleting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-          <div className="bg-white rounded-xl p-5 sm:p-6 max-w-sm w-full">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm px-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
             <h3 className="font-medium text-ink mb-2">Delete product?</h3>
             <p className="text-sm text-ink-muted mb-4">
               &ldquo;{deleting.name}&rdquo; will be soft-deleted. Stock movement history will be preserved.

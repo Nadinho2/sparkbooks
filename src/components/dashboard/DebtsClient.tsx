@@ -400,8 +400,8 @@ export function DebtsClient({ initialData, businessName }: DebtsClientProps) {
 
       {/* Record Payment Modal */}
       {selectedDebt && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-2xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-rule animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl border border-slate-200/90 ring-1 ring-black/5 my-auto animate-in zoom-in-95 duration-150">
             <h3 className="font-display text-lg font-bold text-ink">Record Debt Payment</h3>
             <p className="text-xs text-ink-muted mt-0.5">
               Customer: <strong className="text-ink">{selectedDebt.customerName}</strong>
@@ -480,8 +480,8 @@ export function DebtsClient({ initialData, businessName }: DebtsClientProps) {
 
       {/* Create New Debt Modal */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-2xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-rule animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200/90 ring-1 ring-black/5 my-auto animate-in zoom-in-95 duration-150">
             <h3 className="font-display text-lg font-bold text-ink">Record Customer Debt / Credit</h3>
             <p className="text-xs text-ink-muted mt-0.5">
               Record a sale where the customer is paying later or has a pending balance.

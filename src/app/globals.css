@@ -12,10 +12,12 @@
   --font-mono: var(--font-ibm-plex-mono);
 
   /* Colors */
-  --color-paper: #EEF3EC;
+  --color-paper: #F1F5F9;
+  --color-sand: #E2E8F0;
+  --color-sand-light: #F8FAFC;
   --color-ink: #16213E;
-  --color-ink-muted: #5F5E5A;
-  --color-rule: #C9D6C9;
+  --color-ink-muted: #64748B;
+  --color-rule: #E2E8F0;
   --color-money: #1E8E5A;
   --color-money-light: #EAF3DE;
   --color-flag: #C97A1A;

@@ -99,8 +99,8 @@ export function EditProductModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-start justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl p-5 sm:p-6 max-w-md w-full mt-8 sm:mt-10">
+    <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl p-6 sm:p-7 max-w-md w-full my-auto shadow-2xl border border-slate-200/90 relative ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
         <h3 className="font-display text-lg text-ink mb-4">
           {isAdd ? "Add product" : "Edit product"}
         </h3>
