@@ -116,7 +116,7 @@ export async function createManualLedgerEntry(data: {
       amount: data.amount,
       item_description: data.itemDescription.trim(),
       product_id: data.productId ?? null,
-      payment_method: data.paymentMethod || "transfer",
+      payment_method: data.paymentMethod || null,
       customer_name: data.customerName?.trim() || null,
       source: "dashboard_manual",
       confidence_score: 1.0,

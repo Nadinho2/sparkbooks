@@ -101,7 +101,11 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
   const amountPaid = debtInfo ? debtInfo.amount_paid : Number(entry.amount);
   const amountOwed = debtInfo ? debtInfo.amount_owed : 0;
   const isDebt = amountOwed > 0;
-  const paymentMethod = (entry.payment_method || "transfer").toUpperCase();
+  const rawMethod = entry.payment_method?.trim();
+  const paymentMethod =
+    rawMethod && rawMethod.toLowerCase() !== "unspecified"
+      ? rawMethod.toUpperCase()
+      : null;
 
   const formattedDate = new Date(entry.created_at).toLocaleDateString("en-NG", {
     weekday: "short",
@@ -200,9 +204,11 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
               <p className="font-medium text-ink text-sm leading-tight">
                 {prodName}
               </p>
-              <p className="text-[11px] text-ink-muted mt-0.5">
-                Channel: {paymentMethod}
-              </p>
+              {paymentMethod && (
+                <p className="text-[11px] text-ink-muted mt-0.5">
+                  Channel: {paymentMethod}
+                </p>
+              )}
             </div>
             <span className="font-display font-semibold text-base text-ink shrink-0">
               {nf.format(totalAmount)}
@@ -217,10 +223,17 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
             <span className="font-medium text-ink">{nf.format(totalAmount)}</span>
           </div>
 
-          <div className="flex justify-between text-ink-muted">
-            <span>Payment Method</span>
-            <span className="font-medium text-ink">{paymentMethod}</span>
-          </div>
+          {paymentMethod ? (
+            <div className="flex justify-between text-ink-muted">
+              <span>Payment Method</span>
+              <span className="font-medium text-ink">{paymentMethod}</span>
+            </div>
+          ) : (
+            <div className="flex justify-between text-ink-muted">
+              <span>Payment Status</span>
+              <span className="font-medium text-emerald-700">Direct Payment</span>
+            </div>
+          )}
 
           <div className="flex justify-between text-ink-muted">
             <span>Amount Paid</span>

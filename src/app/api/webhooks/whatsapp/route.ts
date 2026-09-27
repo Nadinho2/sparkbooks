@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { normalizePhone, sendTextMessage, sendTemplateMessage } from "@/lib/whatsapp";
-import { parseMessage } from "@/lib/deepseek";
+import { parseMessage, ParsedEntry } from "@/lib/deepseek";
 import { processVoiceMessage } from "@/lib/voice";
 import { updateProductStock } from "@/lib/stock";
 import {
@@ -58,6 +58,55 @@ function verifyHmacSignature(body: string, signature: string): boolean {
 /* ───────────────────────────────────────────
    Helpers
    ─────────────────────────────────────────── */
+
+/**
+ * Fast deterministic intent detection for common queries and commands.
+ * Runs instantly without waiting for LLM completion.
+ */
+function detectFastIntent(
+  text: string,
+): "debt_check" | "daily_summary" | "weekly_summary" | "stock_check" | "help" | null {
+  const t = text.trim().toLowerCase().replace(/[?!.,]/g, "").replace(/\s+/g, " ");
+
+  // 1. Debt check: "who is owing me", "who dey owe me", "who owe me", "who is owing", "who dey owe",
+  // "debtors", "debtors list", "check debtors", "show debtors", "show my debtors", "my debtors", "debts",
+  // "anybody owing me", "list of debtors", "list debtors", "who owe", "who is owing me money"
+  if (
+    /^(who\s+(?:is\s+owing|dey\s+owe|owe)\s*(?:me(?:\s+money)?)?|who\s+dey\s+owe|debtors?|debtors?\s+list|show\s+(?:me\s+)?debtors?|check\s+debts?|unpaid\s+debts?|anybody\s+owing(?:\s+me)?|list\s+of\s+debtors|customer\s+debts?)$/i.test(t) ||
+    /^(who\s+(?:is\s+owing|dey\s+owe|owe)\s*me)/i.test(t) ||
+    /^(show|check|get|list)\s+(?:all\s+)?(?:my\s+)?debtors/i.test(t)
+  ) {
+    return "debt_check";
+  }
+
+  // 2. Daily summary: "today summary", "today's summary", "closing report", "daily summary", "today sales", "sales today", "how much did i sell today", "closing"
+  if (
+    /^(today(?:'s)?\s+(?:summary|sales|report)|closing\s+report|daily\s+summary|how\s+much\s+(?:did\s+i\s+sell\s+)?today|sales\s+today|today\s+p&?l|closing\s+summary|close\s+today)$/i.test(t)
+  ) {
+    return "daily_summary";
+  }
+
+  // 3. Weekly summary: "weekly summary", "weekly report", "this week sales", "how much this week"
+  if (
+    /^(weekly\s+(?:summary|report|sales)|this\s+week(?:'s)?\s+sales|how\s+much\s+(?:did\s+i\s+sell\s+)?this\s+week)$/i.test(t)
+  ) {
+    return "weekly_summary";
+  }
+
+  // 4. Stock check: "check stock", "stock list", "all stock", "show stock", "view stock"
+  if (
+    /^(check\s+stock|stock\s+list|all\s+stock|show\s+stock|view\s+stock|inventory\s+list|how\s+many\s+stock)$/i.test(t)
+  ) {
+    return "stock_check";
+  }
+
+  // 5. Help / Greeting: "help", "menu", "hi", "hello", "hey"
+  if (/^(help|menu|hi|hello|hey|how\s+does\s+this\s+work)$/i.test(t)) {
+    return "help";
+  }
+
+  return null;
+}
 
 async function findTenantByPhone(
   supabase: ReturnType<typeof createAdminClient>,
@@ -491,24 +540,46 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     };
   });
 
-  // ── 6. PARSE WITH DEEPSEEK ──
-  let parsed;
-  try {
-    parsed = await parseMessage(rawText!, catalogItems);
-  } catch (err) {
-    console.error("DeepSeek parse error:", err);
-    await supabase
-      .from("whatsapp_messages")
-      .update({ status: "failed" })
-      .eq("id", waMsg.id);
-    await replyToUser(
-      supabase,
-      tenant.id,
-      fromPhone,
-      "Sorry, I had trouble parsing that. Could you please rephrase?",
-      senderMemberId,
-    );
-    return;
+  // ── 6. PARSE INTENT (FAST DETERMINISTIC MATCH OR DEEPSEEK) ──
+  const fastIntent = rawText ? detectFastIntent(rawText) : null;
+  let parsed: ParsedEntry;
+
+  if (fastIntent) {
+    parsed = {
+      entry_type: fastIntent,
+      matched_product_id: null,
+      matched_product_name: null,
+      is_new_product: false,
+      new_product_name: null,
+      quantity: null,
+      unit: null,
+      unit_cost: null,
+      amount: null,
+      payment_method: null,
+      customer_name: null,
+      amount_paid: null,
+      amount_owed: null,
+      confidence: 1.0,
+      clarification_needed: null,
+    };
+  } else {
+    try {
+      parsed = await parseMessage(rawText!, catalogItems);
+    } catch (err) {
+      console.error("DeepSeek parse error:", err);
+      await supabase
+        .from("whatsapp_messages")
+        .update({ status: "failed" })
+        .eq("id", waMsg.id);
+      await replyToUser(
+        supabase,
+        tenant.id,
+        fromPhone,
+        "Sorry, I had trouble parsing that. Could you please rephrase?",
+        senderMemberId,
+      );
+      return;
+    }
   }
 
   const { confidence, entry_type } = parsed;
@@ -609,12 +680,15 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     for (const e of entries ?? []) {
       const amt = Number(e.amount);
-      const method = (e.payment_method || "transfer").toLowerCase();
+      const method = (e.payment_method || "").toLowerCase();
       if (e.type === "sale") {
         totalSales += amt;
-        if (paymentMethods[method] !== undefined) paymentMethods[method] += amt;
+        if (method === "transfer") paymentMethods.transfer += amt;
+        else if (method === "cash") paymentMethods.cash += amt;
+        else if (method === "pos") paymentMethods.pos += amt;
         else paymentMethods.other += amt;
-        salesList.push(`• ${e.item_description || "Sale"} — *${nf.format(amt)}* (${method.toUpperCase()})`);
+        const methodTag = method ? ` (${method.toUpperCase()})` : "";
+        salesList.push(`• ${e.item_description || "Sale"} — *${nf.format(amt)}*${methodTag}`);
       } else if (e.type === "expense") {
         totalExpenses += amt;
         expenseList.push(`• ${e.item_description || "Expense"} — *${nf.format(amt)}*`);
@@ -639,7 +713,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       if (paymentMethods.transfer > 0) pmParts.push(`Transfer: ${nf.format(paymentMethods.transfer)}`);
       if (paymentMethods.cash > 0) pmParts.push(`Cash: ${nf.format(paymentMethods.cash)}`);
       if (paymentMethods.pos > 0) pmParts.push(`POS: ${nf.format(paymentMethods.pos)}`);
-      if (paymentMethods.other > 0) pmParts.push(`Other: ${nf.format(paymentMethods.other)}`);
+      if (paymentMethods.other > 0) pmParts.push(`Direct/Other: ${nf.format(paymentMethods.other)}`);
       if (pmParts.length > 0) {
         summaryReply += `💳 *By Payment Channel:*\n${pmParts.join(" | ")}\n\n`;
       }
@@ -686,11 +760,13 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     for (const e of entries ?? []) {
       const amt = Number(e.amount);
-      const method = (e.payment_method || "transfer").toLowerCase();
+      const method = (e.payment_method || "").toLowerCase();
       if (e.type === "sale") {
         totalSales += amt;
         saleCount++;
-        if (paymentMethods[method] !== undefined) paymentMethods[method] += amt;
+        if (method === "transfer") paymentMethods.transfer += amt;
+        else if (method === "cash") paymentMethods.cash += amt;
+        else if (method === "pos") paymentMethods.pos += amt;
         else paymentMethods.other += amt;
       } else if (e.type === "expense") {
         totalExpenses += amt;
@@ -704,10 +780,15 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     reply += `💰 *Total Sales:* *${nf.format(totalSales)}* (${saleCount} transactions)\n`;
     reply += `💸 *Total Expenses:* *${nf.format(totalExpenses)}*\n`;
     reply += `📈 *Net Profit:* *${profitSign}${nf.format(netProfit)}*\n\n`;
-    reply += `💳 *Channel Breakdown:*\n`;
-    reply += `• Transfer: *${nf.format(paymentMethods.transfer)}*\n`;
-    reply += `• Cash: *${nf.format(paymentMethods.cash)}*\n`;
-    reply += `• POS: *${nf.format(paymentMethods.pos)}*`;
+
+    const channelLines: string[] = [];
+    if (paymentMethods.transfer > 0) channelLines.push(`• Transfer: *${nf.format(paymentMethods.transfer)}*`);
+    if (paymentMethods.cash > 0) channelLines.push(`• Cash: *${nf.format(paymentMethods.cash)}*`);
+    if (paymentMethods.pos > 0) channelLines.push(`• POS: *${nf.format(paymentMethods.pos)}*`);
+    if (paymentMethods.other > 0) channelLines.push(`• Direct/Other: *${nf.format(paymentMethods.other)}*`);
+    if (channelLines.length > 0) {
+      reply += `💳 *Channel Breakdown:*\n${channelLines.join("\n")}\n\n`;
+    }
 
     await supabase
       .from("whatsapp_messages")
@@ -762,7 +843,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   if (entry_type === "debt_repayment" && (parsed.amount || parsed.amount_paid)) {
     const payment = parsed.amount || parsed.amount_paid || 0;
     const custName = (parsed.customer_name || "").trim();
-    const method = parsed.payment_method || "transfer";
+    const method = parsed.payment_method ?? null;
+    const methodTag = method ? ` (${method.toUpperCase()})` : "";
 
     let debtor: {
       id: number;
@@ -830,7 +912,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       reply =
         `✅ *Debt Payment Recorded!*\n` +
         `• Customer: *${debtor.customer_name}*\n` +
-        `• Amount Paid: *${nf.format(payment)}* (${method.toUpperCase()})\n` +
+        `• Amount Paid: *${nf.format(payment)}*${methodTag}\n` +
         `• Remaining Balance: *${newOwed > 0 ? nf.format(newOwed) : "₦0 (Fully Settled! 🎉)"}*`;
 
       if (receiptUrl) {
@@ -856,7 +938,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       ledgerId = ledger?.id ?? null;
       const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
 
-      reply = `✅ *Payment Recorded:* *${nf.format(payment)}* from *${custName || "Customer"}* (${method.toUpperCase()}).`;
+      reply = `✅ *Payment Recorded:* *${nf.format(payment)}* from *${custName || "Customer"}*${methodTag}.`;
       if (receiptUrl) {
         reply += `\n\n🧾 *Receipt:*\n${receiptUrl}`;
       }
@@ -884,7 +966,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const amountPaid = parsed.amount_paid ?? Math.max(0, totalAmount - (parsed.amount_owed ?? 0));
     const amountOwed = parsed.amount_owed ?? Math.max(0, totalAmount - amountPaid);
     const customerName = (parsed.customer_name || "Customer").trim();
-    const method = parsed.payment_method || "transfer";
+    const method = parsed.payment_method ?? null;
+    const methodTag = method ? ` (${method.toUpperCase()})` : "";
 
     // Deduct stock if product matched
     if (productId && qty > 0) {
@@ -952,7 +1035,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       `📝 *Credit Sale Recorded!*\n` +
       `• Item: ${qty} ${unit} of *${productName ?? "item"}*\n` +
       `• Total Amount: *${nf.format(totalAmount)}*\n` +
-      `• Paid Now: *${nf.format(amountPaid)}* (${method.toUpperCase()})\n` +
+      `• Paid Now: *${nf.format(amountPaid)}*${methodTag}\n` +
       `• Outstanding Debt: *${nf.format(amountOwed)}* (Owed by *${customerName}*)`;
 
     if (receiptUrl) {
@@ -1054,7 +1137,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           amount: totalAmount,
           item_description: `Inventory restock: ${qty} ${unit} of ${productName}`,
           product_id: productId,
-          payment_method: parsed.payment_method || "transfer",
+          payment_method: parsed.payment_method ?? null,
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linked_message_id: waMsg.id,
           confidence_score: confidence,
@@ -1089,7 +1172,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       parsed.new_product_name ||
       "General business expense";
 
-    const method = parsed.payment_method || "cash";
+    const method = parsed.payment_method ?? null;
+    const methodTag = method ? ` (${method.toUpperCase()})` : "";
 
     const { data: ledger } = await supabase
       .from("ledger_entries")
@@ -1115,7 +1199,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       })
       .eq("id", waMsg.id);
 
-    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(parsed.amount)}* (${method.toUpperCase()})`;
+    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(parsed.amount)}*${methodTag}`;
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
     return;
   }
@@ -1127,7 +1211,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const qty = parsed.quantity ?? 1;
     const unit = parsed.unit ?? "pcs";
     const amount = parsed.amount ?? 0;
-    const method = parsed.payment_method || "transfer";
+    const method = parsed.payment_method ?? null;
 
     // If new item not in catalog yet, auto-create it
     if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
@@ -1197,9 +1281,10 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .eq("id", waMsg.id);
 
     const receiptUrl = ledger?.id ? getReceiptUrl(ledger.id) : null;
+    const viaTag = method ? ` via ${method.toUpperCase()}` : "";
     let reply = custName
-      ? `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) to *${custName}* via ${method.toUpperCase()}.`
-      : `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) via ${method.toUpperCase()}.`;
+      ? `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) to *${custName}*${viaTag}.`
+      : `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*)${viaTag}.`;
 
     if (receiptUrl) {
       reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;

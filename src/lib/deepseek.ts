@@ -107,11 +107,11 @@ Rules:
    - "unclear": The intent is ambiguous or missing critical information.
 
 2. PAYMENT METHODS:
-   - Detect channel if mentioned:
-     - "transfer": transfer, bank transfer, opay, moniepoint, palmplay, kudo, direct transfer.
+   - Only extract 'payment_method' if the merchant EXPLICITLY mentions the payment channel:
+     - "transfer": transfer, bank transfer, opay, moniepoint, palmplay, kuda, direct transfer.
      - "cash": cash, raw cash.
      - "pos": pos, card, atm card.
-     - Default to "transfer" if not specified on sales/expenses.
+   - If payment method is NOT explicitly stated in the message, set "payment_method": null. NEVER assume, default, or guess "transfer" or any other method.
 
 3. PRODUCT MATCHING:
    - Match existing catalog products (including variants or abbreviations). Set matched_product_id and matched_product_name, and is_new_product=false.
@@ -209,6 +209,10 @@ export async function parseMessage(
         "stock_in",
         "stock_check",
         "daily_summary",
+        "weekly_summary",
+        "debt",
+        "debt_repayment",
+        "debt_check",
         "help",
         "unclear",
       ];
