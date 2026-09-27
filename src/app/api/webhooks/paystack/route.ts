@@ -60,11 +60,11 @@ export async function POST(request: NextRequest) {
         const query = subscriptionCode
           ? supabase
               .from("tenants")
-              .select("id, paystack_subscription_id")
+              .select("id, paystack_subscription_id, whatsapp_number, plan_tier")
               .eq("paystack_subscription_id", subscriptionCode)
           : supabase
               .from("tenants")
-              .select("id, paystack_customer_id")
+              .select("id, paystack_customer_id, whatsapp_number, plan_tier")
               .eq("paystack_customer_id", customerCode);
 
         const { data: tenantData } = await query.single();
@@ -77,10 +77,36 @@ export async function POST(request: NextRequest) {
             update.current_period_end = nextPaymentDate;
           }
 
+          // Sync plan tier from Paystack plan code if present
+          const planCode = data.plan?.plan_code || data.subscription?.plan?.plan_code;
+          if (planCode) {
+            if (process.env.PAYSTACK_PRO_PLAN_CODE && planCode === process.env.PAYSTACK_PRO_PLAN_CODE) {
+              update.plan_tier = "pro";
+              update.monthly_message_limit = -1;
+            } else if (process.env.PAYSTACK_STARTER_PLAN_CODE && planCode === process.env.PAYSTACK_STARTER_PLAN_CODE) {
+              update.plan_tier = "starter";
+              update.monthly_message_limit = Number(process.env.STARTER_MESSAGE_LIMIT) || 200;
+            }
+          }
+
           await supabase
             .from("tenants")
             .update(update)
             .eq("id", tenantData.id);
+
+          // Send celebratory WhatsApp confirmation to the merchant
+          if (tenantData.whatsapp_number) {
+            const rawTier = (update.plan_tier as string) || tenantData.plan_tier || "SparkBooks";
+            const tierLabel = rawTier.charAt(0).toUpperCase() + rawTier.slice(1);
+            try {
+              await sendTextMessage(
+                tenantData.whatsapp_number,
+                `🎉 *Subscription Confirmed!*\n\nYour *${tierLabel}* plan is active and ready to use on SparkBooks. Thank you for your payment!`
+              );
+            } catch (err) {
+              console.warn("Could not send WhatsApp subscription confirmation:", err);
+            }
+          }
         }
         break;
       }
@@ -93,7 +119,7 @@ export async function POST(request: NextRequest) {
 
         const { data: tenantData } = await supabase
           .from("tenants")
-          .select("id, current_period_end")
+          .select("id, current_period_end, whatsapp_number")
           .eq("paystack_subscription_id", subscriptionCode)
           .single();
 
@@ -113,6 +139,22 @@ export async function POST(request: NextRequest) {
                 // Keep current plan_tier and limits until period_end
               })
               .eq("id", tenantData.id);
+
+            if (tenantData.whatsapp_number) {
+              const formattedDate = periodEnd.toLocaleDateString("en-NG", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              });
+              try {
+                await sendTextMessage(
+                  tenantData.whatsapp_number,
+                  `ℹ️ Your SparkBooks subscription has been cancelled. Your paid benefits remain active until *${formattedDate}*.`
+                );
+              } catch (err) {
+                console.warn("Could not send WhatsApp cancellation notice:", err);
+              }
+            }
           } else {
             // Period ended or no period_end — downgrade to free now
             await supabase
