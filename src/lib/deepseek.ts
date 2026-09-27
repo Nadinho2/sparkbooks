@@ -12,7 +12,18 @@ export interface CatalogItem {
 }
 
 export interface ParsedEntry {
-  entry_type: "sale" | "expense" | "stock_in" | "stock_check" | "daily_summary" | "help" | "unclear";
+  entry_type:
+    | "sale"
+    | "expense"
+    | "stock_in"
+    | "stock_check"
+    | "daily_summary"
+    | "weekly_summary"
+    | "debt"
+    | "debt_repayment"
+    | "debt_check"
+    | "help"
+    | "unclear";
   matched_product_id: number | null;
   matched_product_name: string | null;
   is_new_product: boolean;
@@ -21,6 +32,10 @@ export interface ParsedEntry {
   unit: string | null;
   unit_cost: number | null;
   amount: number | null;
+  payment_method?: "transfer" | "cash" | "pos" | "other" | null;
+  customer_name?: string | null;
+  amount_paid?: number | null;
+  amount_owed?: number | null;
   confidence: number;
   clarification_needed: string | null;
 }
@@ -47,7 +62,7 @@ ${catalogJson}
 
 Return ONLY valid JSON, no preamble, no markdown fences, matching this exact shape:
 {
-  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "daily_summary" | "help" | "unclear",
+  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "help" | "unclear",
   "matched_product_id": number | null,
   "matched_product_name": string | null,
   "is_new_product": boolean,
@@ -56,30 +71,52 @@ Return ONLY valid JSON, no preamble, no markdown fences, matching this exact sha
   "unit": string | null,
   "unit_cost": number | null,
   "amount": number | null,
+  "payment_method": "transfer" | "cash" | "pos" | "other" | null,
+  "customer_name": string | null,
+  "amount_paid": number | null,
+  "amount_owed": number | null,
   "confidence": number,
   "clarification_needed": string | null
 }
 
 Rules:
 1. ENTRY TYPES:
-   - "sale": A sale made to a customer (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000").
-     'amount' is the TOTAL revenue in Naira (e.g. 3 * 100k = 300000).
-   - "expense": Operational or business expenses (e.g. "Paid shop rent 50,000", "Fuel 5k", "Transport 2000", "Dispatch rider 3k", "Generator fuel 5000").
-     For general expenses not tied to a catalog item, set matched_product_id=null, matched_product_name="Shop rent" (or expense title), amount=amount.
-   - "stock_in": Adding or restocking inventory (e.g. "I have restocked 2*6 closure 50 pcs at the cost price of 20k for 1", "Restocked 10 Bone Straight", "Add product Bone Straight qty 20 cost 50000", "Received 15 bundles").
+   - "sale": A completed sale (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000 via OPay transfer", "Sold to Chioma 1 dress 30k cash").
+     'amount' is the TOTAL revenue in Naira.
+   - "debt": A sale where the customer made a partial payment or bought on credit (e.g. "Sold 1 bone straight 100k to Blessing, she paid 60k balance 40k", "Sold 2 closure to Amaka for 50k on credit", "Gave Tunde 2 items for 30k, paid half 15k").
+     'amount' is the TOTAL sale value (e.g. 100000).
+     'amount_paid' is what was paid right now (e.g. 60000). If zero paid, amount_paid=0.
+     'amount_owed' is the remaining unpaid balance (e.g. 40000).
+     'customer_name' is the customer's name (e.g. "Blessing", "Amaka", "Tunde").
+   - "debt_repayment": Customer paying back an existing debt or balance (e.g. "Blessing paid her 40k balance", "Amaka paid 20k for the hair she was owing", "Received 15k balance from Tunde").
+     'amount' is the amount paid back in Naira.
+     'customer_name' is the customer who paid.
+   - "debt_check": Inquiries about customer debts/balances (e.g. "Who is owing me?", "Show my debtors", "How much is Blessing owing?", "Check unpaid debts").
+     'customer_name' can be set if asking about a specific person.
+   - "expense": Operational or business expenses (e.g. "Paid shop rent 50,000", "Fuel 5k cash", "Transport 2000", "Dispatch rider 3k", "Generator fuel 5000").
+     For general expenses, set matched_product_id=null, matched_product_name="Shop rent" (or expense title), amount=amount.
+   - "stock_in": Adding or restocking inventory (e.g. "I have restocked 2*6 closure 50 pcs at cost price of 20k each", "Restocked 10 Bone Straight").
      'quantity' is the number of units added.
-     'unit_cost' is the unit purchase cost in Naira if stated (e.g. 20000).
-     'amount' is the total purchase cost (e.g. 50 * 20000 = 1000000) if stated or implied.
-   - "stock_check": Inquiries about inventory levels (e.g. "How many Bone Straight left?", "Check stock", "Inventory level").
-   - "daily_summary": Inquiries about today's sales/profit (e.g. "How much did I sell today?", "Today's summary", "Sales report").
+     'unit_cost' is the unit purchase cost in Naira.
+     'amount' is total purchase cost.
+   - "stock_check": Inquiries about inventory levels (e.g. "How many Bone Straight left?", "Check stock", "How many closure do I have?").
+   - "daily_summary": Inquiries about today's sales/profit/closing (e.g. "How much did I sell today?", "Today's summary", "Sales report", "Close today", "Daily closing").
+   - "weekly_summary": Inquiries about this week's numbers (e.g. "Weekly sales", "How much this week?", "Weekly report").
    - "help": Greetings or instructions (e.g. "Help", "Hi", "Hello", "How does this work?").
    - "unclear": The intent is ambiguous or missing critical information.
 
-2. PRODUCT MATCHING:
-   - If the message matches an existing catalog product (including close variants or abbreviations), set matched_product_id and matched_product_name, and set is_new_product=false.
-   - If the item is NOT in the catalog (e.g. "2*6 closure"), set matched_product_id=null, is_new_product=true, and set new_product_name.
+2. PAYMENT METHODS:
+   - Detect channel if mentioned:
+     - "transfer": transfer, bank transfer, opay, moniepoint, palmplay, kudo, direct transfer.
+     - "cash": cash, raw cash.
+     - "pos": pos, card, atm card.
+     - Default to "transfer" if not specified on sales/expenses.
 
-3. NUMBERS AND CURRENCY:
+3. PRODUCT MATCHING:
+   - Match existing catalog products (including variants or abbreviations). Set matched_product_id and matched_product_name, and is_new_product=false.
+   - If not in catalog, set matched_product_id=null, is_new_product=true, and set new_product_name.
+
+4. NUMBERS AND CURRENCY:
    - Recognize Nigerian abbreviations: 'k' = thousand (20k = 20000, 100k = 100000), 'm' = million (1m = 1000000).
    - All amounts and costs must be plain integers in NGN (Naira).
    - Never guess an amount or quantity that was not stated or clearly implied.`;

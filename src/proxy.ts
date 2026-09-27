@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   "/privacy",                   // Privacy Policy (public / Meta compliance)
   "/refund",                    // Refund Policy (public / Paystack compliance)
   "/deletion",                  // User Data Deletion Instructions (Meta compliance)
+  "/receipt/(.*)",              // Customer Digital Receipts (public link for WhatsApp buyers)
   "/api/webhooks/(.*)",         // WhatsApp & Paystack webhooks (HMAC-verified)
   "/api/cron/(.*)",             // Cron jobs (bearer-token verified)
 ]);

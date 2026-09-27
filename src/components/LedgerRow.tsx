@@ -5,6 +5,8 @@ interface LedgerRowProps {
   subtitle: string;
   amount: number;
   direction: "in" | "out";
+  paymentMethod?: string | null;
+  receiptId?: number;
   source?: "whatsapp_voice" | "whatsapp_text" | "dashboard_manual";
   isLast?: boolean;
   onDelete?: () => void;
@@ -15,11 +17,14 @@ export function LedgerRow({
   subtitle,
   amount,
   direction,
+  paymentMethod,
+  receiptId,
   source,
   isLast,
   onDelete,
 }: LedgerRowProps) {
   const isIn = direction === "in";
+  const method = paymentMethod?.toLowerCase();
 
   return (
     <div
@@ -28,15 +33,40 @@ export function LedgerRow({
       }`}
     >
       <div className="flex flex-col min-w-0 mr-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-sm font-medium text-ink truncate">{title}</span>
+          {method && method !== "other" && (
+            <span
+              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                method === "cash"
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  : method === "pos"
+                  ? "bg-purple-50 text-purple-700 border border-purple-200"
+                  : "bg-blue-50 text-blue-700 border border-blue-200"
+              }`}
+            >
+              {method}
+            </span>
+          )}
+          {receiptId && isIn && (
+            <a
+              href={`/receipt/${receiptId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-sand hover:bg-sand-light text-ink-muted hover:text-ink transition-colors border border-rule/60"
+              title="View & share digital receipt"
+            >
+              <span>Receipt</span>
+              <span>↗</span>
+            </a>
+          )}
           {source === "whatsapp_voice" && (
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-spark/10 text-spark">
               Voice
             </span>
           )}
           {source === "whatsapp_text" && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-money/10 text-money">
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#25D366]/10 text-[#128C7E]">
               WhatsApp
             </span>
           )}

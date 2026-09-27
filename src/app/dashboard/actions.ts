@@ -13,6 +13,7 @@ export interface LedgerEntryItem {
   itemDescription: string;
   productId: number | null;
   productName: string | null;
+  paymentMethod: string | null;
   source: "whatsapp_voice" | "whatsapp_text" | "dashboard_manual";
   confidenceScore: number | null;
   createdAt: string;
@@ -36,7 +37,7 @@ export async function fetchDashboardOverview(): Promise<DashboardOverviewData> {
   const [entriesRes, productsRes] = await Promise.all([
     supabase
       .from("ledger_entries")
-      .select("id, type, amount, item_description, product_id, source, confidence_score, created_at, products(name)")
+      .select("id, type, amount, item_description, product_id, payment_method, source, confidence_score, created_at, products(name)")
       .eq("tenant_id", tenantId)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -61,6 +62,7 @@ export async function fetchDashboardOverview(): Promise<DashboardOverviewData> {
       itemDescription: row.item_description,
       productId: row.product_id,
       productName: prodObj?.name ?? null,
+      paymentMethod: (row as { payment_method?: string | null }).payment_method ?? "transfer",
       source: row.source as "whatsapp_voice" | "whatsapp_text" | "dashboard_manual",
       confidenceScore: row.confidence_score != null ? Number(row.confidence_score) : null,
       createdAt: row.created_at,
@@ -85,6 +87,7 @@ export async function createManualLedgerEntry(data: {
   itemDescription: string;
   productId?: number | null;
   quantity?: number | null;
+  paymentMethod?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
@@ -109,6 +112,7 @@ export async function createManualLedgerEntry(data: {
       amount: data.amount,
       item_description: data.itemDescription.trim(),
       product_id: data.productId ?? null,
+      payment_method: data.paymentMethod || "transfer",
       source: "dashboard_manual",
       confidence_score: 1.0,
     })

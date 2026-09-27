@@ -177,6 +177,18 @@ async function replyToUser(
   return sendRes;
 }
 
+/**
+ * Generate a public digital receipt URL for a ledger entry.
+ */
+function getReceiptUrl(entryId: number): string {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL;
+  const domain =
+    envUrl && !envUrl.includes("localhost")
+      ? envUrl.replace(/\/$/, "")
+      : "https://sparkbooks-jade.vercel.app";
+  return `${domain}/receipt/${entryId}`;
+}
+
 interface WhatsAppWebhookPayload {
   entry?: Array<{
     changes?: Array<{
@@ -523,11 +535,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const helpReply =
       `👋 Welcome to *SparkBooks AI*,${brandGreeting}!\n` +
       `I'm your 24/7 automated bookkeeper. Here is what you can send me (text or voice note):\n\n` +
-      `💰 *Record Sale:* "Sold 3 Bone Straight wig for 100k each"\n` +
-      `💸 *Record Expense:* "Paid shop rent 50k" or "Bought fuel 5,000"\n` +
+      `💰 *Record Sale:* "Sold 3 Bone Straight wig for 100k each via transfer"\n` +
+      `🧾 *Credit Sale / Debt:* "Sold 1 wig 80k to Amaka, paid 50k, balance 30k"\n` +
+      `💳 *Debt Repayment:* "Amaka paid her 30k balance"\n` +
+      `📋 *Check Debtors:* "Who is owing me?" or "Debtors list"\n` +
+      `💸 *Record Expense:* "Paid shop rent 50k" or "Bought fuel 5,000 cash"\n` +
       `📦 *Restock / Add Stock:* "Restocked 50 closures at 20k cost"\n` +
-      `🔍 *Check Stock:* "How many Bone Straight do I have left?" or "Total inventory"\n` +
-      `📊 *Daily Summary:* "Today's summary" or "Show me my P&L"\n\n` +
+      `🔍 *Check Stock:* "How many Bone Straight do I have left?"\n` +
+      `📊 *Summaries:* "Today's summary" or "Weekly report" or "Closing report"\n\n` +
       `Go ahead and record your first transaction now! 🚀`;
 
     await replyToUser(supabase, tenant.id, fromPhone, helpReply, senderMemberId);
@@ -574,28 +589,32 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
-  // 7C: TODAY'S SALES / PROFIT SUMMARY
+  // 7C: TODAY'S SALES / CLOSING SUMMARY / P&L
   if (entry_type === "daily_summary") {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
     const { data: entries } = await supabase
       .from("ledger_entries")
-      .select("type, amount, item_description, created_at")
+      .select("type, amount, item_description, payment_method, created_at")
       .eq("tenant_id", tenant.id)
       .gte("created_at", today.toISOString())
       .order("created_at", { ascending: true });
 
     let totalSales = 0;
     let totalExpenses = 0;
+    const paymentMethods: Record<string, number> = { transfer: 0, cash: 0, pos: 0, other: 0 };
     const salesList: string[] = [];
     const expenseList: string[] = [];
 
     for (const e of entries ?? []) {
       const amt = Number(e.amount);
+      const method = (e.payment_method || "transfer").toLowerCase();
       if (e.type === "sale") {
         totalSales += amt;
-        salesList.push(`• ${e.item_description || "Sale"} — *${nf.format(amt)}*`);
+        if (paymentMethods[method] !== undefined) paymentMethods[method] += amt;
+        else paymentMethods.other += amt;
+        salesList.push(`• ${e.item_description || "Sale"} — *${nf.format(amt)}* (${method.toUpperCase()})`);
       } else if (e.type === "expense") {
         totalExpenses += amt;
         expenseList.push(`• ${e.item_description || "Expense"} — *${nf.format(amt)}*`);
@@ -606,26 +625,34 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const profitEmoji = netProfit >= 0 ? "📈" : "📉";
     const profitSign = netProfit >= 0 ? "+" : "";
 
-    let summaryReply = `📊 *Today's Breakdown & P&L:*\n\n`;
+    let summaryReply = `📊 *Today's Closing Summary & P&L:*\n\n`;
 
-    summaryReply += `💰 *Sales Breakdown (${nf.format(totalSales)}):*\n`;
+    summaryReply += `💰 *Sales Total: ${nf.format(totalSales)}* (${salesList.length} transaction${salesList.length === 1 ? "" : "s"})\n`;
     if (salesList.length > 0) {
-      summaryReply += salesList.join("\n") + "\n\n";
+      summaryReply += salesList.slice(0, 8).join("\n") + (salesList.length > 8 ? `\n...and ${salesList.length - 8} more` : "") + "\n\n";
     } else {
       summaryReply += `• No sales recorded today\n\n`;
     }
 
-    summaryReply += `💸 *Expenses & Purchases (${nf.format(totalExpenses)}):\n`;
+    if (totalSales > 0) {
+      const pmParts: string[] = [];
+      if (paymentMethods.transfer > 0) pmParts.push(`Transfer: ${nf.format(paymentMethods.transfer)}`);
+      if (paymentMethods.cash > 0) pmParts.push(`Cash: ${nf.format(paymentMethods.cash)}`);
+      if (paymentMethods.pos > 0) pmParts.push(`POS: ${nf.format(paymentMethods.pos)}`);
+      if (paymentMethods.other > 0) pmParts.push(`Other: ${nf.format(paymentMethods.other)}`);
+      if (pmParts.length > 0) {
+        summaryReply += `💳 *By Payment Channel:*\n${pmParts.join(" | ")}\n\n`;
+      }
+    }
+
+    summaryReply += `💸 *Expenses Total: ${nf.format(totalExpenses)}*\n`;
     if (expenseList.length > 0) {
-      summaryReply += expenseList.join("\n") + "\n\n";
+      summaryReply += expenseList.slice(0, 5).join("\n") + "\n\n";
     } else {
       summaryReply += `• No expenses recorded today\n\n`;
     }
 
-    summaryReply += `${profitEmoji} *Profit & Loss (P&L):*\n`;
-    summaryReply += `• Total Sales: *${nf.format(totalSales)}* (${salesList.length} transaction${salesList.length === 1 ? "" : "s"})\n`;
-    summaryReply += `• Total Expenses: *${nf.format(totalExpenses)}*\n`;
-    summaryReply += `• Net Profit / Loss: *${profitSign}${nf.format(netProfit)}*`;
+    summaryReply += `${profitEmoji} *Net Profit / Loss:* *${profitSign}${nf.format(netProfit)}*`;
 
     await supabase
       .from("whatsapp_messages")
@@ -636,7 +663,306 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
-  // 7D: STOCK IN / INVENTORY ADDITION / RESTOCK
+  // 7D: WEEKLY PERFORMANCE SUMMARY
+  if (entry_type === "weekly_summary") {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    const day = startOfWeek.getUTCDay();
+    const diff = (day === 0 ? -6 : 1) - day;
+    startOfWeek.setUTCDate(startOfWeek.getUTCDate() + diff);
+    startOfWeek.setUTCHours(0, 0, 0, 0);
+
+    const { data: entries } = await supabase
+      .from("ledger_entries")
+      .select("type, amount, payment_method, created_at")
+      .eq("tenant_id", tenant.id)
+      .gte("created_at", startOfWeek.toISOString())
+      .order("created_at", { ascending: true });
+
+    let totalSales = 0;
+    let totalExpenses = 0;
+    let saleCount = 0;
+    const paymentMethods: Record<string, number> = { transfer: 0, cash: 0, pos: 0, other: 0 };
+
+    for (const e of entries ?? []) {
+      const amt = Number(e.amount);
+      const method = (e.payment_method || "transfer").toLowerCase();
+      if (e.type === "sale") {
+        totalSales += amt;
+        saleCount++;
+        if (paymentMethods[method] !== undefined) paymentMethods[method] += amt;
+        else paymentMethods.other += amt;
+      } else if (e.type === "expense") {
+        totalExpenses += amt;
+      }
+    }
+
+    const netProfit = totalSales - totalExpenses;
+    const profitSign = netProfit >= 0 ? "+" : "";
+
+    let reply = `📅 *Weekly Performance Summary:*\n\n`;
+    reply += `💰 *Total Sales:* *${nf.format(totalSales)}* (${saleCount} transactions)\n`;
+    reply += `💸 *Total Expenses:* *${nf.format(totalExpenses)}*\n`;
+    reply += `📈 *Net Profit:* *${profitSign}${nf.format(netProfit)}*\n\n`;
+    reply += `💳 *Channel Breakdown:*\n`;
+    reply += `• Transfer: *${nf.format(paymentMethods.transfer)}*\n`;
+    reply += `• Cash: *${nf.format(paymentMethods.cash)}*\n`;
+    reply += `• POS: *${nf.format(paymentMethods.pos)}*`;
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({ status: "matched" })
+      .eq("id", waMsg.id);
+
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
+  // 7E: DEBT CHECK INQUIRY ("Who is owing me?" / "Debtors list")
+  if (entry_type === "debt_check") {
+    let reply = "";
+    try {
+      const { data: debtors, error } = await supabase
+        .from("customer_debts")
+        .select("customer_name, customer_phone, total_amount, amount_paid, amount_owed, status")
+        .eq("tenant_id", tenant.id)
+        .neq("status", "settled")
+        .order("amount_owed", { ascending: false });
+
+      if (error || !debtors || debtors.length === 0) {
+        reply = `🎉 *Great news!* You currently have no outstanding customer debts. All accounts are settled!`;
+      } else {
+        let totalPending = 0;
+        const list = debtors.map((d) => {
+          const owed = Number(d.amount_owed);
+          totalPending += owed;
+          return `• *${d.customer_name}*: owing *${nf.format(owed)}* (paid ${nf.format(Number(d.amount_paid))})`;
+        });
+
+        reply =
+          `📋 *Customer Debtors List (Pending Balances):*\n\n` +
+          list.join("\n") +
+          `\n\n💰 *Total Unpaid Debt:* *${nf.format(totalPending)}* across ${debtors.length} customer(s).\n` +
+          `_Tip: When someone pays, send: "[Customer Name] paid [amount]"!_`;
+      }
+    } catch {
+      reply = `Could not fetch debtors list right now. Please check your dashboard.`;
+    }
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({ status: "matched" })
+      .eq("id", waMsg.id);
+
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
+  // 7F: DEBT REPAYMENT ("Blessing paid 40k balance")
+  if (entry_type === "debt_repayment" && (parsed.amount || parsed.amount_paid)) {
+    const payment = parsed.amount || parsed.amount_paid || 0;
+    const custName = (parsed.customer_name || "").trim();
+    const method = parsed.payment_method || "transfer";
+
+    let debtor: {
+      id: number;
+      customer_name: string;
+      total_amount: number;
+      amount_paid: number;
+      amount_owed: number;
+    } | null = null;
+
+    if (custName) {
+      try {
+        const { data: matched } = await supabase
+          .from("customer_debts")
+          .select("id, customer_name, total_amount, amount_paid, amount_owed")
+          .eq("tenant_id", tenant.id)
+          .neq("status", "settled")
+          .ilike("customer_name", `%${custName}%`)
+          .limit(1)
+          .maybeSingle();
+
+        debtor = matched;
+      } catch (err) {
+        console.error("Debt repayment lookup error:", err);
+      }
+    }
+
+    let ledgerId: number | null = null;
+    let reply = "";
+
+    if (debtor) {
+      const currentPaid = Number(debtor.amount_paid);
+      const totalAmount = Number(debtor.total_amount);
+      const newPaid = Math.min(totalAmount, currentPaid + payment);
+      const newOwed = Math.max(0, totalAmount - newPaid);
+      const newStatus = newOwed === 0 ? "settled" : "partially_paid";
+
+      await supabase
+        .from("customer_debts")
+        .update({
+          amount_paid: newPaid,
+          amount_owed: newOwed,
+          status: newStatus,
+        })
+        .eq("id", debtor.id);
+
+      const { data: ledger } = await supabase
+        .from("ledger_entries")
+        .insert({
+          tenant_id: tenant.id,
+          type: "sale",
+          amount: payment,
+          item_description: `Debt repayment from ${debtor.customer_name}`,
+          payment_method: method,
+          source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+          linked_message_id: waMsg.id,
+          confidence_score: confidence,
+        })
+        .select("id")
+        .single();
+
+      ledgerId = ledger?.id ?? null;
+      const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+
+      reply =
+        `✅ *Debt Payment Recorded!*\n` +
+        `• Customer: *${debtor.customer_name}*\n` +
+        `• Amount Paid: *${nf.format(payment)}* (${method.toUpperCase()})\n` +
+        `• Remaining Balance: *${newOwed > 0 ? nf.format(newOwed) : "₦0 (Fully Settled! 🎉)"}*`;
+
+      if (receiptUrl) {
+        reply += `\n\n🧾 *Receipt for Customer:*\n${receiptUrl}`;
+      }
+    } else {
+      const { data: ledger } = await supabase
+        .from("ledger_entries")
+        .insert({
+          tenant_id: tenant.id,
+          type: "sale",
+          amount: payment,
+          item_description: custName ? `Payment received from ${custName}` : "Customer payment",
+          payment_method: method,
+          source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+          linked_message_id: waMsg.id,
+          confidence_score: confidence,
+        })
+        .select("id")
+        .single();
+
+      ledgerId = ledger?.id ?? null;
+      const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+
+      reply = `✅ *Payment Recorded:* *${nf.format(payment)}* from *${custName || "Customer"}* (${method.toUpperCase()}).`;
+      if (receiptUrl) {
+        reply += `\n\n🧾 *Receipt:*\n${receiptUrl}`;
+      }
+    }
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({
+        status: "matched",
+        linked_entry_id: ledgerId,
+      })
+      .eq("id", waMsg.id);
+
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
+  // 7G: CREDIT SALE / CUSTOMER DEBT
+  if ((entry_type === "debt" || (parsed.amount_owed && parsed.amount_owed > 0)) && confidence >= 0.7) {
+    let productId = parsed.matched_product_id;
+    let productName = parsed.matched_product_name;
+    const qty = parsed.quantity ?? 1;
+    const unit = parsed.unit ?? "pcs";
+    const totalAmount = parsed.amount ?? (parsed.amount_paid ?? 0) + (parsed.amount_owed ?? 0);
+    const amountPaid = parsed.amount_paid ?? Math.max(0, totalAmount - (parsed.amount_owed ?? 0));
+    const amountOwed = parsed.amount_owed ?? Math.max(0, totalAmount - amountPaid);
+    const customerName = (parsed.customer_name || "Customer").trim();
+    const method = parsed.payment_method || "transfer";
+
+    // Deduct stock if product matched
+    if (productId && qty > 0) {
+      await updateProductStock({
+        supabase,
+        tenantId: tenant.id,
+        productId,
+        changeQty: -qty,
+        type: "out",
+        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+        linkedMessageId: waMsg.id,
+        alertPhone: fromPhone,
+        reason: `Credit sale to ${customerName}`,
+      });
+    }
+
+    // Record in ledger
+    const { data: ledger } = await supabase
+      .from("ledger_entries")
+      .insert({
+        tenant_id: tenant.id,
+        type: "sale",
+        amount: totalAmount,
+        item_description: productName
+          ? `Sold ${qty} ${unit} of ${productName} to ${customerName}`
+          : `Sale to ${customerName}`,
+        product_id: productId,
+        payment_method: method,
+        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+        linked_message_id: waMsg.id,
+        confidence_score: confidence,
+      })
+      .select("id")
+      .single();
+
+    const ledgerId = ledger?.id ?? null;
+
+    // Record debt
+    try {
+      await supabase.from("customer_debts").insert({
+        tenant_id: tenant.id,
+        customer_name: customerName,
+        linked_entry_id: ledgerId,
+        total_amount: totalAmount,
+        amount_paid: amountPaid,
+        amount_owed: amountOwed,
+        status: amountOwed === 0 ? "settled" : amountPaid > 0 ? "partially_paid" : "unpaid",
+        notes: productName ? `${qty} ${unit} of ${productName}` : null,
+      });
+    } catch (err) {
+      console.error("Failed to insert customer debt:", err);
+    }
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({
+        status: "matched",
+        linked_entry_id: ledgerId,
+      })
+      .eq("id", waMsg.id);
+
+    const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+    let reply =
+      `📝 *Credit Sale Recorded!*\n` +
+      `• Item: ${qty} ${unit} of *${productName ?? "item"}*\n` +
+      `• Total Amount: *${nf.format(totalAmount)}*\n` +
+      `• Paid Now: *${nf.format(amountPaid)}* (${method.toUpperCase()})\n` +
+      `• Outstanding Debt: *${nf.format(amountOwed)}* (Owed by *${customerName}*)`;
+
+    if (receiptUrl) {
+      reply +=
+        `\n\n🧾 *Customer Digital Receipt:*\n${receiptUrl}\n` +
+        `_Copy & send this link to ${customerName} on WhatsApp!_`;
+    }
+
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
+  // 7H: STOCK IN / INVENTORY ADDITION / RESTOCK
   if (entry_type === "stock_in" && confidence >= 0.7) {
     let productId = parsed.matched_product_id;
     let productName = parsed.matched_product_name;
@@ -682,7 +1008,6 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       productId = createdProduct.id;
       productName = createdProduct.name;
 
-      // Record initial stock movement
       if (qty > 0) {
         await supabase.from("stock_movements").insert({
           tenant_id: tenant.id,
@@ -695,7 +1020,6 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         });
       }
     } else if (productId) {
-      // Existing product restock
       if (qty > 0) {
         await updateProductStock({
           supabase,
@@ -717,7 +1041,6 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       }
     }
 
-    // If purchase cost was stated or computed, record an expense in the ledger
     let ledgerId: number | null = null;
     if (totalAmount && totalAmount > 0) {
       const { data: ledger } = await supabase
@@ -728,6 +1051,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           amount: totalAmount,
           item_description: `Inventory restock: ${qty} ${unit} of ${productName}`,
           product_id: productId,
+          payment_method: parsed.payment_method || "transfer",
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linked_message_id: waMsg.id,
           confidence_score: confidence,
@@ -755,12 +1079,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
-  // 7E: GENERAL BUSINESS EXPENSE
+  // 7I: GENERAL BUSINESS EXPENSE
   if (entry_type === "expense" && confidence >= 0.75 && parsed.amount && parsed.amount > 0) {
     const desc =
       parsed.matched_product_name ||
       parsed.new_product_name ||
       "General business expense";
+
+    const method = parsed.payment_method || "cash";
 
     const { data: ledger } = await supabase
       .from("ledger_entries")
@@ -770,6 +1096,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         amount: parsed.amount,
         item_description: desc,
         product_id: parsed.matched_product_id ?? null,
+        payment_method: method,
         source: isVoice ? "whatsapp_voice" : "whatsapp_text",
         linked_message_id: waMsg.id,
         confidence_score: confidence,
@@ -785,18 +1112,19 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       })
       .eq("id", waMsg.id);
 
-    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(parsed.amount)}*`;
+    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(parsed.amount)}* (${method.toUpperCase()})`;
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
     return;
   }
 
-  // 7F: RECORD SALE
+  // 7J: RECORD SALE
   if (entry_type === "sale" && confidence >= 0.75) {
     let productId = parsed.matched_product_id;
     let productName = parsed.matched_product_name;
     const qty = parsed.quantity ?? 1;
     const unit = parsed.unit ?? "pcs";
     const amount = parsed.amount ?? 0;
+    const method = parsed.payment_method || "transfer";
 
     // If new item not in catalog yet, auto-create it
     if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
@@ -831,6 +1159,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         amount,
         item_description: productName ? `Sold ${qty} ${unit} of ${productName}` : "Sale",
         product_id: productId,
+        payment_method: method,
         source: isVoice ? "whatsapp_voice" : "whatsapp_text",
         linked_message_id: waMsg.id,
         confidence_score: confidence,
@@ -860,12 +1189,17 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       })
       .eq("id", waMsg.id);
 
-    const reply = `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*)`;
+    const receiptUrl = ledger?.id ? getReceiptUrl(ledger.id) : null;
+    let reply = `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) via ${method.toUpperCase()}.`;
+    if (receiptUrl) {
+      reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;
+    }
+
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
     return;
   }
 
-  // 7G: LOW CONFIDENCE OR UNCLEAR FALLBACK
+  // 7K: LOW CONFIDENCE OR UNCLEAR FALLBACK
   await supabase
     .from("whatsapp_messages")
     .update({ status: "pending_confirmation" })

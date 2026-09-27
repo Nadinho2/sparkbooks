@@ -38,6 +38,7 @@ export function OverviewClient({
   const [typeFilter, setTypeFilter] = useState<EntryTypeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPlModalOpen, setIsPlModalOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   // Form state
@@ -46,6 +47,7 @@ export function OverviewClient({
   const [formAmount, setFormAmount] = useState("");
   const [formProductId, setFormProductId] = useState<string>("");
   const [formQty, setFormQty] = useState("1");
+  const [formPaymentMethod, setFormPaymentMethod] = useState("transfer");
   const [formError, setFormError] = useState<string | null>(null);
 
   // Filter entries by date period
@@ -102,6 +104,54 @@ export function OverviewClient({
     };
   }, [dateFilteredEntries]);
 
+  // Financial P&L Breakdown
+  const plData = useMemo(() => {
+    let transferSales = 0;
+    let cashSales = 0;
+    let posSales = 0;
+    let otherSales = 0;
+    let cogs = 0;
+    let operatingExpenses = 0;
+
+    for (const e of dateFilteredEntries) {
+      const method = (e.paymentMethod || "transfer").toLowerCase();
+      if (e.type === "sale") {
+        if (method === "cash") cashSales += e.amount;
+        else if (method === "pos") posSales += e.amount;
+        else if (method === "transfer") transferSales += e.amount;
+        else otherSales += e.amount;
+      } else {
+        const desc = e.itemDescription.toLowerCase();
+        if (desc.includes("restock") || desc.includes("inventory") || desc.includes("stock") || e.productId) {
+          cogs += e.amount;
+        } else {
+          operatingExpenses += e.amount;
+        }
+      }
+    }
+
+    const totalRevenue = transferSales + cashSales + posSales + otherSales;
+    const totalExpenses = cogs + operatingExpenses;
+    const grossProfit = totalRevenue - cogs;
+    const netProfit = totalRevenue - totalExpenses;
+    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+    return {
+      transferSales,
+      cashSales,
+      posSales,
+      otherSales,
+      totalRevenue,
+      cogs,
+      operatingExpenses,
+      grossProfit,
+      netProfit,
+      grossMargin,
+      netMargin,
+    };
+  }, [dateFilteredEntries]);
+
   // Filter list by type & search text
   const displayedEntries = useMemo(() => {
     return dateFilteredEntries.filter((entry) => {
@@ -142,6 +192,7 @@ export function OverviewClient({
         itemDescription: formDesc.trim(),
         productId: selectedProd,
         quantity: qty,
+        paymentMethod: formPaymentMethod,
       });
 
       if (!res.success) {
@@ -155,6 +206,7 @@ export function OverviewClient({
           itemDescription: formDesc.trim(),
           productId: selectedProd,
           productName: products.find((p) => p.id === selectedProd)?.name ?? null,
+          paymentMethod: formPaymentMethod,
           source: "dashboard_manual",
           confidenceScore: 1.0,
           createdAt: new Date().toISOString(),
@@ -165,6 +217,7 @@ export function OverviewClient({
         setFormAmount("");
         setFormProductId("");
         setFormQty("1");
+        setFormPaymentMethod("transfer");
       }
     });
   };
@@ -185,12 +238,13 @@ export function OverviewClient({
 
   // Export to CSV
   const handleExportCsv = () => {
-    const headers = ["Date", "Type", "Description", "Product", "Amount (NGN)", "Source"];
+    const headers = ["Date", "Type", "Description", "Product", "Payment Method", "Amount (NGN)", "Source"];
     const rows = displayedEntries.map((e) => [
       new Date(e.createdAt).toLocaleDateString("en-NG"),
       e.type.toUpperCase(),
       `"${e.itemDescription.replace(/"/g, '""')}"`,
       `"${(e.productName ?? "").replace(/"/g, '""')}"`,
+      (e.paymentMethod || "transfer").toUpperCase(),
       e.amount.toFixed(2),
       e.source,
     ]);
@@ -200,6 +254,46 @@ export function OverviewClient({
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", `SparkBooks_Ledger_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export Financial P&L Statement to CSV
+  const handleExportPlCsv = () => {
+    const lines = [
+      [`"PROFIT & LOSS STATEMENT"`],
+      [`"Business Name: ${businessName}"`],
+      [`"Period: ${period.toUpperCase()}"`],
+      [`"Generated: ${new Date().toLocaleDateString("en-NG")}"`],
+      [""],
+      [`"REVENUE & SALES INFLOWS"`],
+      [`"Bank Transfer Sales",${plData.transferSales.toFixed(2)}`],
+      [`"Cash Sales",${plData.cashSales.toFixed(2)}`],
+      [`"POS / Card Terminal Sales",${plData.posSales.toFixed(2)}`],
+      ...(plData.otherSales > 0 ? [[`"Other Sales",${plData.otherSales.toFixed(2)}`]] : []),
+      [`"TOTAL REVENUE",${plData.totalRevenue.toFixed(2)}`],
+      [""],
+      [`"COST OF GOODS SOLD (COGS)"`],
+      [`"Inventory Purchases & Restocks",${plData.cogs.toFixed(2)}`],
+      [`"TOTAL COGS",${plData.cogs.toFixed(2)}`],
+      [""],
+      [`"GROSS PROFIT",${plData.grossProfit.toFixed(2)}`],
+      [`"Gross Margin %",${plData.grossMargin.toFixed(1)}%`],
+      [""],
+      [`"OPERATING EXPENSES"`],
+      [`"General Business Operating Expenses",${plData.operatingExpenses.toFixed(2)}`],
+      [`"TOTAL OPERATING EXPENSES",${plData.operatingExpenses.toFixed(2)}`],
+      [""],
+      [`"NET OPERATING INCOME / NET PROFIT",${plData.netProfit.toFixed(2)}`],
+      [`"Net Profit Margin %",${plData.netMargin.toFixed(1)}%`],
+    ];
+
+    const csvContent = "data:text/csv;charset=utf-8," + lines.map((r) => r.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `SparkBooks_PL_Statement_${businessName.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -216,7 +310,20 @@ export function OverviewClient({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-stretch sm:self-auto">
+        <div className="flex items-center gap-2 self-stretch sm:self-auto flex-wrap sm:flex-nowrap">
+          <button
+            onClick={() => setIsPlModalOpen(true)}
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-ink bg-white border border-rule rounded-lg hover:bg-paper transition-colors shadow-2xs"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            P&L Statement
+          </button>
           <button
             onClick={handleExportCsv}
             disabled={displayedEntries.length === 0}
@@ -414,6 +521,8 @@ export function OverviewClient({
                   subtitle={subtitle}
                   amount={entry.amount}
                   direction={entry.type === "sale" ? "in" : "out"}
+                  paymentMethod={entry.paymentMethod}
+                  receiptId={entry.type === "sale" ? entry.id : undefined}
                   source={entry.source}
                   isLast={index === displayedEntries.length - 1}
                   onDelete={() => handleDelete(entry.id)}
@@ -501,6 +610,22 @@ export function OverviewClient({
                 />
               </div>
 
+              {/* Payment Channel */}
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Payment Channel / Method
+                </label>
+                <select
+                  value={formPaymentMethod}
+                  onChange={(e) => setFormPaymentMethod(e.target.value)}
+                  className="w-full text-xs px-3 py-2 border border-rule rounded-lg focus:outline-none focus:border-spark bg-white"
+                >
+                  <option value="transfer">Bank Transfer (OPay, Kuda, Moniepoint, etc.)</option>
+                  <option value="cash">Cash in Hand</option>
+                  <option value="pos">POS / Card Terminal</option>
+                </select>
+              </div>
+
               {/* Product link (optional for sales) */}
               {formType === "sale" && products.length > 0 && (
                 <div className="grid grid-cols-3 gap-2">
@@ -558,6 +683,161 @@ export function OverviewClient({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Formal P&L Statement Modal */}
+      {isPlModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-2xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-rule relative animate-in fade-in zoom-in-95 my-8">
+            <button
+              onClick={() => setIsPlModalOpen(false)}
+              className="absolute top-5 right-5 text-ink-muted hover:text-ink text-sm p-1 rounded-lg hover:bg-paper print:hidden"
+            >
+              ✕
+            </button>
+
+            {/* Document Header */}
+            <div className="text-center pb-6 border-b border-rule/80">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-sand border border-rule/80 text-money mb-2">
+                Official Financial Statement &bull; Bank & Grant Ready
+              </div>
+              <h2 className="font-display text-2xl font-bold text-ink">
+                {businessName}
+              </h2>
+              <p className="text-sm font-semibold text-ink-muted mt-0.5">
+                STATEMENT OF PROFIT & LOSS (INCOME STATEMENT)
+              </p>
+              <p className="text-xs text-ink-muted mt-1">
+                Period: <span className="font-semibold text-ink capitalize">{period}</span> &bull; Reconciled:{" "}
+                <span className="font-semibold text-ink">
+                  {new Date().toLocaleDateString("en-NG", { month: "long", day: "numeric", year: "numeric" })}
+                </span>
+              </p>
+            </div>
+
+            {/* Statement Body */}
+            <div className="py-6 space-y-6 text-xs sm:text-sm">
+              {/* 1. Operating Revenue */}
+              <div>
+                <div className="flex justify-between font-bold text-ink uppercase tracking-wider text-xs pb-1 border-b border-rule/60">
+                  <span>1. Operating Revenue (Sales)</span>
+                  <span>Amount</span>
+                </div>
+                <div className="py-2 space-y-1.5 pl-3">
+                  <div className="flex justify-between text-ink-muted">
+                    <span>Direct Bank Transfers</span>
+                    <span className="font-mono text-ink">{formatNaira(plData.transferSales)}</span>
+                  </div>
+                  <div className="flex justify-between text-ink-muted">
+                    <span>Cash Sales</span>
+                    <span className="font-mono text-ink">{formatNaira(plData.cashSales)}</span>
+                  </div>
+                  <div className="flex justify-between text-ink-muted">
+                    <span>POS / Terminal Payments</span>
+                    <span className="font-mono text-ink">{formatNaira(plData.posSales)}</span>
+                  </div>
+                  {plData.otherSales > 0 && (
+                    <div className="flex justify-between text-ink-muted">
+                      <span>Other Revenue</span>
+                      <span className="font-mono text-ink">{formatNaira(plData.otherSales)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-between font-bold text-ink pt-1.5 border-t border-rule/60">
+                  <span>Total Revenue (A)</span>
+                  <span className="font-mono text-money">{formatNaira(plData.totalRevenue)}</span>
+                </div>
+              </div>
+
+              {/* 2. Cost of Goods Sold */}
+              <div>
+                <div className="flex justify-between font-bold text-ink uppercase tracking-wider text-xs pb-1 border-b border-rule/60">
+                  <span>2. Cost of Goods Sold (COGS)</span>
+                  <span>Amount</span>
+                </div>
+                <div className="py-2 space-y-1.5 pl-3">
+                  <div className="flex justify-between text-ink-muted">
+                    <span>Inventory Restocks & Wholesale Purchases</span>
+                    <span className="font-mono text-ink">{formatNaira(plData.cogs)}</span>
+                  </div>
+                </div>
+                <div className="flex justify-between font-bold text-ink pt-1.5 border-t border-rule/60">
+                  <span>Total Cost of Goods Sold (B)</span>
+                  <span className="font-mono text-flag">{formatNaira(plData.cogs)}</span>
+                </div>
+              </div>
+
+              {/* Gross Profit Summary */}
+              <div className="bg-sand/40 p-3 rounded-xl border border-rule/60 flex justify-between items-center font-bold">
+                <div>
+                  <span className="text-ink">GROSS PROFIT (A - B)</span>
+                  <span className="text-xs text-ink-muted block font-normal">
+                    Gross Margin: {plData.grossMargin.toFixed(1)}%
+                  </span>
+                </div>
+                <span className="font-mono text-base text-ink">
+                  {formatNaira(plData.grossProfit)}
+                </span>
+              </div>
+
+              {/* 3. Operating Expenses */}
+              <div>
+                <div className="flex justify-between font-bold text-ink uppercase tracking-wider text-xs pb-1 border-b border-rule/60">
+                  <span>3. Operating Expenses (OPEX)</span>
+                  <span>Amount</span>
+                </div>
+                <div className="py-2 space-y-1.5 pl-3">
+                  <div className="flex justify-between text-ink-muted">
+                    <span>General Store Operations (Rent, Fuel, Logistics, Utilities)</span>
+                    <span className="font-mono text-ink">{formatNaira(plData.operatingExpenses)}</span>
+                  </div>
+                </div>
+                <div className="flex justify-between font-bold text-ink pt-1.5 border-t border-rule/60">
+                  <span>Total Operating Expenses (C)</span>
+                  <span className="font-mono text-flag">{formatNaira(plData.operatingExpenses)}</span>
+                </div>
+              </div>
+
+              {/* Final Net Profit */}
+              <div className="bg-emerald-50 border-2 border-emerald-500/40 p-4 rounded-xl flex justify-between items-center">
+                <div>
+                  <h4 className="font-display font-bold text-emerald-950 text-base sm:text-lg">
+                    NET OPERATING INCOME / NET PROFIT
+                  </h4>
+                  <p className="text-xs text-emerald-700">
+                    Net Profit Margin: <strong>{plData.netMargin.toFixed(1)}%</strong> &bull; Total Transactions: {dateFilteredEntries.length}
+                  </p>
+                </div>
+                <span className="font-display font-bold text-xl sm:text-2xl text-emerald-900 font-mono">
+                  {formatNaira(plData.netProfit)}
+                </span>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-4 border-t border-rule/80 flex flex-wrap items-center justify-between gap-3 print:hidden">
+              <span className="text-[11px] text-ink-muted">
+                Generated automatically by SparkBooks AI Bookkeeping
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportPlCsv}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-white border border-rule text-ink hover:bg-paper transition-colors"
+                >
+                  Download CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-ink text-white hover:bg-black transition-colors"
+                >
+                  Print / Save PDF
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
