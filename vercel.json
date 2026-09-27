@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/daily-closing",
       "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-debtors",
+      "schedule": "0 19 * * 0"
     }
   ]
 }
