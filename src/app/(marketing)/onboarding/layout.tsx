@@ -1,5 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { getCurrentPartner } from "@/lib/partner-server";
+import { isAdmin } from "@/lib/admin-auth";
 
 export default async function OnboardingLayout({
   children,
@@ -9,6 +11,18 @@ export default async function OnboardingLayout({
   const { userId } = await auth();
   if (!userId) {
     redirect("/sign-in");
+  }
+
+  // Intercept partners and coordinators — they manage merchants and do not register stores
+  const partner = await getCurrentPartner();
+  if (partner) {
+    redirect("/partner");
+  }
+
+  // Intercept super admins
+  const admin = await isAdmin();
+  if (admin) {
+    redirect("/admin");
   }
 
   return (

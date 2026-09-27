@@ -85,25 +85,77 @@ export interface PartnerCommissionItem {
  */
 export async function requirePartner(): Promise<Partner> {
   const { userId, sessionClaims } = await auth();
-  if (!userId) redirect("/sign-in");
+  if (!userId) redirect("/sign-in?redirect_url=/partner");
 
   const supabase = createAdminClient();
 
   // 1. Check database for partner record matching clerk_user_id
-  const { data: partnerRow } = await supabase
+  let { data: partnerRow } = await supabase
     .from("partners")
     .select("*")
     .eq("clerk_user_id", userId)
     .single();
 
+  // 2. Auto-link fallback: if not matched by clerk_user_id, check user's email or phone in Clerk
+  if (!partnerRow) {
+    try {
+      const { clerkClient } = await import("@clerk/nextjs/server");
+      const client = await clerkClient();
+      const user = await client.users.getUser(userId);
+      const email = user.emailAddresses[0]?.emailAddress?.toLowerCase();
+      const rawPhone = user.phoneNumbers[0]?.phoneNumber;
+
+      if (email || rawPhone) {
+        let query = supabase.from("partners").select("*").eq("status", "active");
+        if (email && rawPhone) {
+          const suffix10 = rawPhone.replace(/\D/g, "").slice(-10);
+          query = query.or(`email.ilike.${email},phone_number.ilike.%${suffix10}%`);
+        } else if (email) {
+          query = query.ilike("email", email);
+        } else if (rawPhone) {
+          const suffix10 = rawPhone.replace(/\D/g, "").slice(-10);
+          query = query.ilike("phone_number", `%${suffix10}%`);
+        }
+
+        const { data: matched } = await query.limit(1).maybeSingle();
+
+        if (matched) {
+          // Link this Clerk user ID to the partner record
+          await supabase
+            .from("partners")
+            .update({
+              clerk_user_id: userId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", matched.id);
+
+          try {
+            await client.users.updateUser(userId, {
+              publicMetadata: {
+                ...user.publicMetadata,
+                role: "partner",
+                partnerId: matched.id,
+              },
+            });
+          } catch {}
+
+          partnerRow = { ...matched, clerk_user_id: userId };
+        }
+      }
+    } catch (err) {
+      console.warn("[requirePartner] Error verifying email/phone partner link:", err);
+    }
+  }
+
   if (partnerRow && partnerRow.status === "active") {
     return mapPartnerRow(partnerRow);
   }
 
-  // 2. Fallback: check Clerk publicMetadata role
+  // 3. Fallback: check Clerk publicMetadata role
   let role = (sessionClaims?.publicMetadata as { role?: string } | undefined)?.role;
   if (!role) {
     try {
+      const { clerkClient } = await import("@clerk/nextjs/server");
       const client = await clerkClient();
       const user = await client.users.getUser(userId);
       role = (user.publicMetadata as { role?: string } | undefined)?.role;
@@ -144,19 +196,70 @@ export async function requirePartner(): Promise<Partner> {
 
 /**
  * Get current partner if available (safe, returns null without redirecting)
+ * Also auto-links verified email / phone to the partner record.
  */
 export async function getCurrentPartner(): Promise<Partner | null> {
   const { userId } = await auth();
   if (!userId) return null;
 
   const supabase = createAdminClient();
-  const { data: partnerRow } = await supabase
+  let { data: partnerRow } = await supabase
     .from("partners")
     .select("*")
     .eq("clerk_user_id", userId)
     .single();
 
-  return partnerRow ? mapPartnerRow(partnerRow) : null;
+  if (partnerRow && partnerRow.status === "active") {
+    return mapPartnerRow(partnerRow);
+  }
+
+  // Auto-link fallback by email or phone
+  try {
+    const { clerkClient } = await import("@clerk/nextjs/server");
+    const client = await clerkClient();
+    const user = await client.users.getUser(userId);
+    const email = user.emailAddresses[0]?.emailAddress?.toLowerCase();
+    const rawPhone = user.phoneNumbers[0]?.phoneNumber;
+
+    if (email || rawPhone) {
+      let query = supabase.from("partners").select("*").eq("status", "active");
+      if (email && rawPhone) {
+        const suffix10 = rawPhone.replace(/\D/g, "").slice(-10);
+        query = query.or(`email.ilike.${email},phone_number.ilike.%${suffix10}%`);
+      } else if (email) {
+        query = query.ilike("email", email);
+      } else if (rawPhone) {
+        const suffix10 = rawPhone.replace(/\D/g, "").slice(-10);
+        query = query.ilike("phone_number", `%${suffix10}%`);
+      }
+
+      const { data: matched } = await query.limit(1).maybeSingle();
+
+      if (matched) {
+        await supabase
+          .from("partners")
+          .update({
+            clerk_user_id: userId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", matched.id);
+
+        try {
+          await client.users.updateUser(userId, {
+            publicMetadata: {
+              ...user.publicMetadata,
+              role: "partner",
+              partnerId: matched.id,
+            },
+          });
+        } catch {}
+
+        return mapPartnerRow({ ...matched, clerk_user_id: userId });
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 function mapPartnerRow(row: Record<string, unknown>): Partner {

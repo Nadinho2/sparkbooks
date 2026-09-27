@@ -156,7 +156,21 @@ export async function getCurrentTenant(): Promise<Tenant> {
     }
   }
 
-  // No tenant or membership found
+  // 6. Check if user is a Partner or Coordinator (they manage stores, they don't own one)
+  const { getCurrentPartner } = await import("@/lib/partner-server");
+  const partner = await getCurrentPartner();
+  if (partner) {
+    redirect("/partner");
+  }
+
+  // 7. Check if user is an Admin
+  const { isAdmin } = await import("@/lib/admin-auth");
+  const admin = await isAdmin();
+  if (admin) {
+    redirect("/admin");
+  }
+
+  // No tenant or membership found — route standard merchant to onboarding
   redirect("/onboarding");
 }
 
