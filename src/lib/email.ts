@@ -60,9 +60,14 @@ function wrapper(content: string): string {
 export async function sendTeamInviteEmail(
   toEmail: string,
   businessName: string,
-) {
+): Promise<{ success: boolean; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { success: false, error: "RESEND_API_KEY is not configured" };
+  }
+
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+    process.env.NEXT_PUBLIC_SITE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "https://sparkbooks-jade.vercel.app";
 
   const content = `
     <table width="100%" cellpadding="0" cellspacing="0">
@@ -99,10 +104,25 @@ export async function sendTeamInviteEmail(
       </tr>
     </table>`;
 
-  await resend.emails.send({
-    from: "SparkBooks <noreply@sparkbooks.com>",
-    to: toEmail,
-    subject: `${businessName} invited you to SparkBooks`,
-    html: wrapper(content),
-  });
+  const fromEmail = process.env.RESEND_FROM_EMAIL || "SparkBooks <onboarding@resend.dev>";
+
+  try {
+    const resend = new Resend(apiKey);
+    const res = await resend.emails.send({
+      from: fromEmail,
+      to: toEmail,
+      subject: `${businessName} invited you to SparkBooks`,
+      html: wrapper(content),
+    });
+
+    if (res.error) {
+      console.warn("Resend email delivery notice:", res.error.message);
+      return { success: false, error: res.error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.warn("Resend email delivery exception:", err?.message || err);
+    return { success: false, error: err?.message || "Email delivery failed" };
+  }
 }

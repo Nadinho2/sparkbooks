@@ -66,7 +66,14 @@ export async function fetchTeamMembers(): Promise<TeamMember[]> {
  * Invite a team member by email.
  * Only the tenant owner can invite.
  */
-export async function inviteTeamMember(email: string): Promise<void> {
+export async function inviteTeamMember(email: string): Promise<{
+  success: boolean;
+  inviteLink: string;
+  emailSent: boolean;
+  businessName: string;
+  invitedEmail: string;
+  message: string;
+}> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
@@ -142,16 +149,29 @@ export async function inviteTeamMember(email: string): Promise<void> {
 
   if (error) throw new Error(error.message);
 
-  // Send invitation email for pending invites (no existing Clerk user)
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "https://sparkbooks-jade.vercel.app";
+  const inviteLink = `${siteUrl.replace(/\/$/, "")}/sign-up`;
+
+  let emailSent = false;
+  // Send invitation email for pending invites
   if (insertStatus === "pending") {
-    await sendTeamInviteEmail(normalizedEmail, tenant.businessName).catch(
-      (err) => {
-        console.error("Failed to send invitation email:", err);
-      },
-    );
+    const emailRes = await sendTeamInviteEmail(normalizedEmail, tenant.businessName);
+    emailSent = emailRes.success;
   }
 
   revalidatePath("/dashboard/team");
+
+  return {
+    success: true,
+    inviteLink,
+    emailSent,
+    businessName: tenant.businessName,
+    invitedEmail: normalizedEmail,
+    message: emailSent
+      ? `Invitation email sent to ${normalizedEmail}.`
+      : `Invitation created! (Resend email service is not connected yet — share the invite link or WhatsApp button below so they can join right away).`,
+  };
 }
 
 /**

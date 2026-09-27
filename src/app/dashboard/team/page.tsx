@@ -63,7 +63,7 @@ export default async function TeamPage() {
           </Link>
         </div>
       ) : (
-        <TeamView members={members} isOwner={owner} />
+        <TeamView members={members} isOwner={owner} businessName={tenant.businessName} />
       )}
     </div>
   );
