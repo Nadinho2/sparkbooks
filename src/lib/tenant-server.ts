@@ -87,6 +87,49 @@ export async function getCurrentTenant(): Promise<Tenant> {
   const client = await clerkClient();
   const clerkUser = await client.users.getUser(userId);
   const email = clerkUser.emailAddresses[0]?.emailAddress;
+  const phoneNumber = clerkUser.phoneNumbers[0]?.phoneNumber;
+  const metaTenantId = (clerkUser.publicMetadata as { tenantId?: number })?.tenantId;
+
+  // 4. Auto-claim store if user was created with a tenantId in publicMetadata (e.g. via magic login)
+  if (metaTenantId) {
+    const { data: matchedMetaTenant } = await supabase
+      .from("tenants")
+      .select("*")
+      .eq("id", metaTenantId)
+      .maybeSingle();
+
+    if (matchedMetaTenant) {
+      if (!matchedMetaTenant.clerk_user_id) {
+        await supabase
+          .from("tenants")
+          .update({ clerk_user_id: userId })
+          .eq("id", matchedMetaTenant.id);
+      }
+      if (matchedMetaTenant.is_suspended) redirect("/suspended");
+      return mapTenantRow({ ...matchedMetaTenant, clerk_user_id: userId });
+    }
+  }
+
+  // 5. Auto-claim store if user signed in with phone matching an unclaimed tenant
+  if (phoneNumber) {
+    const rawDigits = phoneNumber.replace(/\D/g, "");
+    const { data: matchedPhoneTenant } = await supabase
+      .from("tenants")
+      .select("*")
+      .ilike("whatsapp_number", `%${rawDigits.slice(-10)}%`)
+      .is("clerk_user_id", null)
+      .maybeSingle();
+
+    if (matchedPhoneTenant) {
+      await supabase
+        .from("tenants")
+        .update({ clerk_user_id: userId })
+        .eq("id", matchedPhoneTenant.id);
+
+      if (matchedPhoneTenant.is_suspended) redirect("/suspended");
+      return mapTenantRow({ ...matchedPhoneTenant, clerk_user_id: userId });
+    }
+  }
 
   if (email) {
     const { data: pendingInvite } = await supabase

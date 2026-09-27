@@ -23,6 +23,7 @@ export interface ParsedEntry {
     | "debt_repayment"
     | "debt_check"
     | "help"
+    | "magic_login"
     | "unclear";
   matched_product_id: number | null;
   matched_product_name: string | null;

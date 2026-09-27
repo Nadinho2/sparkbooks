@@ -10,6 +10,7 @@ export default async function AdminLayout({
 
   const navItems = [
     { href: "/admin/tenants", label: "Tenants", icon: "building" as const },
+    { href: "/admin/partners", label: "Partners", icon: "handshake" as const },
     { href: "/admin/usage", label: "Usage", icon: "chart" as const },
     { href: "/admin/parsing", label: "Parsing", icon: "search" as const },
     { href: "/admin/billing", label: "Billing", icon: "credit" as const },

@@ -94,6 +94,19 @@ export async function POST(request: NextRequest) {
             .update(update)
             .eq("id", tenantData.id);
 
+          // Attribute partner commission if tenant belongs to an active partner
+          if (data.amount && Number(data.amount) > 0) {
+            try {
+              await supabase.rpc("record_partner_commission", {
+                p_tenant_id: tenantData.id,
+                p_amount_kobo: Number(data.amount),
+                p_description: `Subscription payment (${(update.plan_tier as string) || tenantData.plan_tier || "plan"})`,
+              });
+            } catch (commErr) {
+              console.warn("Could not record partner commission:", commErr);
+            }
+          }
+
           // Send celebratory WhatsApp confirmation to the merchant
           if (tenantData.whatsapp_number) {
             const rawTier = (update.plan_tier as string) || tenantData.plan_tier || "SparkBooks";

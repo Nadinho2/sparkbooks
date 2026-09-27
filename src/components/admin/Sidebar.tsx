@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 type NavItem = {
   href: string;
   label: string;
-  icon: "building" | "chart" | "search" | "credit";
+  icon: "building" | "chart" | "search" | "credit" | "handshake";
 };
 
 export function AdminSidebar({ navItems }: { navItems: NavItem[] }) {
@@ -137,6 +137,12 @@ function Icon({ name }: { name: NavItem["icon"] }) {
           <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
           <rect x="1.5" y="7" width="13" height="2" fill="currentColor" opacity="0.15" />
           <circle cx="11" cy="9.5" r="0.8" fill="currentColor" opacity="0.5" />
+        </svg>
+      );
+    case "handshake":
+      return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0">
+          <path d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
         </svg>
       );
   }

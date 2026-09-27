@@ -14,6 +14,7 @@ import {
   incrementMessageCount,
 } from "@/lib/billing-server";
 import { createHmac, timingSafeEqual } from "crypto";
+import { generateMagicLoginToken } from "@/lib/magic-auth-server";
 
 /**
  * GET — WhatsApp webhook verification.
@@ -65,7 +66,7 @@ function verifyHmacSignature(body: string, signature: string): boolean {
  */
 function detectFastIntent(
   text: string,
-): "debt_check" | "daily_summary" | "weekly_summary" | "stock_check" | "help" | null {
+): "debt_check" | "daily_summary" | "weekly_summary" | "stock_check" | "help" | "magic_login" | null {
   const t = text.trim().toLowerCase().replace(/[?!.,]/g, "").replace(/\s+/g, " ");
 
   // 1. Debt check: "who is owing me", "who dey owe me", "who owe me", "who is owing", "who dey owe",
@@ -103,6 +104,13 @@ function detectFastIntent(
   // 5. Help / Greeting: "help", "menu", "hi", "hello", "hey"
   if (/^(help|menu|hi|hello|hey|how\s+does\s+this\s+work)$/i.test(t)) {
     return "help";
+  }
+
+  // 6. Magic login / Web dashboard: "login", "dashboard", "portal", "sign in"
+  if (
+    /^(login|log in|dashboard|portal|web dashboard|my dashboard|open dashboard|view dashboard|sign in|website)$/i.test(t)
+  ) {
+    return "magic_login";
   }
 
   return null;
@@ -522,6 +530,16 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
+  // Update tenant's last activity timestamp for partner CRM monitoring
+  try {
+    await supabase
+      .from("tenants")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", tenant.id);
+  } catch (err) {
+    console.warn("Could not update tenant last_activity_at:", err);
+  }
+
   // ── 5. FETCH PRODUCT CATALOG ──
   const { data: catalog } = await supabase
     .from("products")
@@ -617,6 +635,35 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       `Go ahead and record your first transaction now! 🚀`;
 
     await replyToUser(supabase, tenant.id, fromPhone, helpReply, senderMemberId);
+    return;
+  }
+
+  // 7A2: MAGIC LOGIN LINK REQUEST
+  if (entry_type === "magic_login") {
+    await supabase
+      .from("whatsapp_messages")
+      .update({ status: "matched" })
+      .eq("id", waMsg.id);
+
+    try {
+      const { loginUrl } = await generateMagicLoginToken(tenant.id, fromPhone);
+      const reply =
+        `🔐 *SparkBooks Web Dashboard Login*\n\n` +
+        `Tap this secure link to open your live dashboard:\n` +
+        `👉 ${loginUrl}\n\n` +
+        `⏳ _Valid for 15 minutes. Password not required._`;
+
+      await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    } catch (err) {
+      console.error("Magic login generation error:", err);
+      await replyToUser(
+        supabase,
+        tenant.id,
+        fromPhone,
+        "Sorry, I had trouble generating your login link. Please try again in a few moments.",
+        senderMemberId,
+      );
+    }
     return;
   }
 
@@ -971,8 +1018,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
   // 7G: CREDIT SALE / CUSTOMER DEBT
   if ((entry_type === "debt" || (parsed.amount_owed && parsed.amount_owed > 0)) && confidence >= 0.7) {
-    let productId = parsed.matched_product_id;
-    let productName = parsed.matched_product_name;
+    const productId = parsed.matched_product_id;
+    const productName = parsed.matched_product_name;
     const qty = parsed.quantity ?? 1;
     const unit = parsed.unit ?? "pcs";
     const totalAmount = parsed.amount ?? (parsed.amount_paid ?? 0) + (parsed.amount_owed ?? 0);
