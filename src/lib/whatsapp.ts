@@ -159,7 +159,7 @@ export async function sendTemplateMessage(
 /**
  * The official SparkBooks WhatsApp Business bot number (international format without +).
  */
-export const SPARKBOOKS_BOT_PHONE = "2349039291067";
+export const SPARKBOOKS_BOT_PHONE = "2348103253238";
 
 /**
  * Generate a wa.me deep link with a prefilled message containing the business / brand name.
