@@ -90,11 +90,17 @@ export async function verifyAndConsumeMagicToken(rawToken: string): Promise<{
     return { success: false, error: "This login link has expired. Send 'LOGIN' on WhatsApp for a fresh link." };
   }
 
-  // 2. Mark token as consumed immediately
-  await supabase
+  // 2. Mark token as consumed atomically (prevents concurrent replay attacks)
+  const { data: updatedRows, error: updateErr } = await supabase
     .from("magic_auth_tokens")
     .update({ used_at: new Date().toISOString() })
-    .eq("id", tokenRecord.id);
+    .eq("id", tokenRecord.id)
+    .is("used_at", null)
+    .select("id");
+
+  if (updateErr || !updatedRows || updatedRows.length === 0) {
+    return { success: false, error: "This login link has already been used. Please request a new one on WhatsApp." };
+  }
 
   const rawTenant = tokenRecord.tenants as unknown;
   const tenant = (Array.isArray(rawTenant) ? rawTenant[0] : rawTenant) as Record<string, unknown> | null;

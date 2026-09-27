@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { sendTextMessage } from "@/lib/whatsapp";
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 /**
  * POST /api/webhooks/paystack
@@ -26,7 +26,10 @@ export async function POST(request: NextRequest) {
   }
 
   const hash = createHmac("sha512", secret).update(body).digest("hex");
-  if (hash !== signature) {
+  const hashBuf = Buffer.from(hash);
+  const sigBuf = Buffer.from(signature);
+
+  if (hashBuf.length !== sigBuf.length || !timingSafeEqual(hashBuf, sigBuf)) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 

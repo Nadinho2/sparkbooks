@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
+import { timingSafeEqual } from "crypto";
 
 const RETENTION_DAYS = 14;
 const BATCH_SIZE = 100;
@@ -29,7 +30,13 @@ export async function GET(request: NextRequest) {
   const queryToken = request.nextUrl.searchParams.get("token");
   const providedToken = bearerToken ?? queryToken;
 
-  if (providedToken !== cronSecret) {
+  if (!providedToken) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const providedBuf = Buffer.from(providedToken);
+  const secretBuf = Buffer.from(cronSecret);
+  if (providedBuf.length !== secretBuf.length || !timingSafeEqual(providedBuf, secretBuf)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -42,7 +49,7 @@ export async function GET(request: NextRequest) {
   let totalProcessed = 0;
   let hasMore = true;
 
-  // Loop until all expired rows are processed
+  // Loop until all expired rows are processed (batched for high throughput)
   while (hasMore) {
     const { data: messages, error } = await supabase
       .from("whatsapp_messages")
@@ -64,30 +71,28 @@ export async function GET(request: NextRequest) {
       break;
     }
 
-    for (const msg of messages) {
-      if (!msg.media_url) {
-        skipped++;
-        continue;
-      }
+    const validMessages = messages.filter((m) => !!m.media_url);
+    const paths = validMessages.map((m) => m.media_url!);
+    const ids = validMessages.map((m) => m.id);
 
-      // Delete from storage
+    if (paths.length > 0) {
+      // 1. Single batch storage deletion
       const { error: delError } = await supabase.storage
         .from("voice-notes")
-        .remove([msg.media_url]);
+        .remove(paths);
 
       if (delError) {
-        console.error(`Failed to delete ${msg.media_url}:`, delError.message);
-        skipped++;
-        continue;
+        console.error("Batch storage delete error:", delError.message);
+        skipped += paths.length;
+      } else {
+        // 2. Single batch database update
+        await supabase
+          .from("whatsapp_messages")
+          .update({ media_url: null })
+          .in("id", ids);
+
+        deleted += paths.length;
       }
-
-      // Nullify media_url on the row
-      await supabase
-        .from("whatsapp_messages")
-        .update({ media_url: null })
-        .eq("id", msg.id);
-
-      deleted++;
     }
 
     totalProcessed += messages.length;

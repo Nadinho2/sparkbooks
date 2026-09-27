@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { normalizePhone, sendTextMessage, sendTemplateMessage } from "@/lib/whatsapp";
 import { parseMessage, ParsedEntry } from "@/lib/deepseek";
@@ -299,12 +299,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ── Process message completely within Meta's 20-second timeout window ──
-  try {
-    await processMessageAsync(body);
-  } catch (err) {
-    console.error("WhatsApp message processing error:", err);
-  }
+  // ── Dispatch background async processing and acknowledge Meta within <100ms ──
+  // Next.js after() keeps the serverless runtime active while Meta receives an instant 200 OK.
+  after(async () => {
+    try {
+      await processMessageAsync(body);
+    } catch (err) {
+      console.error("WhatsApp message processing error:", err);
+    }
+  });
 
   return NextResponse.json({ ok: true });
 }
@@ -888,7 +891,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
   // 7F: DEBT REPAYMENT ("Blessing paid 40k balance")
   if (entry_type === "debt_repayment" && (parsed.amount || parsed.amount_paid)) {
-    const payment = parsed.amount || parsed.amount_paid || 0;
+    const payment = Math.max(0, Math.abs(parsed.amount || parsed.amount_paid || 0));
+    if (payment <= 0) return;
     const custName = (parsed.customer_name || "").trim();
     const method = parsed.payment_method ?? null;
     const methodTag = method ? ` (${method.toUpperCase()})` : "";
@@ -1020,11 +1024,11 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   if ((entry_type === "debt" || (parsed.amount_owed && parsed.amount_owed > 0)) && confidence >= 0.7) {
     const productId = parsed.matched_product_id;
     const productName = parsed.matched_product_name;
-    const qty = parsed.quantity ?? 1;
+    const qty = Math.max(1, Math.abs(parsed.quantity ?? 1));
     const unit = parsed.unit ?? "pcs";
-    const totalAmount = parsed.amount ?? (parsed.amount_paid ?? 0) + (parsed.amount_owed ?? 0);
-    const amountPaid = parsed.amount_paid ?? Math.max(0, totalAmount - (parsed.amount_owed ?? 0));
-    const amountOwed = parsed.amount_owed ?? Math.max(0, totalAmount - amountPaid);
+    const totalAmount = Math.max(0, Math.abs(parsed.amount ?? (parsed.amount_paid ?? 0) + (parsed.amount_owed ?? 0)));
+    const amountPaid = Math.max(0, Math.min(totalAmount, Math.abs(parsed.amount_paid ?? 0)));
+    const amountOwed = Math.max(0, totalAmount - amountPaid);
     const customerName = (parsed.customer_name || "Customer").trim();
     const method = parsed.payment_method ?? null;
     const methodTag = method ? ` (${method.toUpperCase()})` : "";
@@ -1112,13 +1116,16 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   if (entry_type === "stock_in" && confidence >= 0.7) {
     let productId = parsed.matched_product_id;
     let productName = parsed.matched_product_name;
-    const qty = parsed.quantity ?? 0;
+    const qty = Math.max(0, Math.abs(parsed.quantity ?? 0));
     const unit = parsed.unit ?? "pcs";
     const unitCost =
-      parsed.unit_cost ??
-      (parsed.amount && qty > 0 ? Math.round(parsed.amount / qty) : null);
+      parsed.unit_cost != null
+        ? Math.max(0, Math.abs(parsed.unit_cost))
+        : (parsed.amount && qty > 0 ? Math.round(Math.abs(parsed.amount) / qty) : null);
     const totalAmount =
-      parsed.amount ?? (qty > 0 && unitCost ? qty * unitCost : null);
+      parsed.amount != null
+        ? Math.max(0, Math.abs(parsed.amount))
+        : (qty > 0 && unitCost ? qty * unitCost : null);
 
     // If new product (not in catalog yet), auto-create product with initial inventory
     if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
@@ -1227,6 +1234,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
   // 7I: GENERAL BUSINESS EXPENSE
   if (entry_type === "expense" && confidence >= 0.75 && parsed.amount && parsed.amount > 0) {
+    const expenseAmount = Math.max(0, Math.abs(parsed.amount));
     const desc =
       parsed.matched_product_name ||
       parsed.new_product_name ||
@@ -1240,7 +1248,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .insert({
         tenant_id: tenant.id,
         type: "expense",
-        amount: parsed.amount,
+        amount: expenseAmount,
         item_description: desc,
         product_id: parsed.matched_product_id ?? null,
         payment_method: method,
@@ -1259,7 +1267,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       })
       .eq("id", waMsg.id);
 
-    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(parsed.amount)}*${methodTag}`;
+    const reply = `💸 *Recorded Expense:* ${desc} — *${nf.format(expenseAmount)}*${methodTag}`;
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
     return;
   }
@@ -1268,9 +1276,9 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   if (entry_type === "sale" && confidence >= 0.75) {
     let productId = parsed.matched_product_id;
     let productName = parsed.matched_product_name;
-    const qty = parsed.quantity ?? 1;
+    const qty = Math.max(1, Math.abs(parsed.quantity ?? 1));
     const unit = parsed.unit ?? "pcs";
-    const amount = parsed.amount ?? 0;
+    const amount = Math.max(0, Math.abs(parsed.amount ?? 0));
     const method = parsed.payment_method ?? null;
 
     // If new item not in catalog yet, auto-create it

@@ -52,7 +52,15 @@ interface FetchMessagesParams {
 /**
  * Fetch all registered senders (Owner + Active/Pending Team Members) with their Clerk profiles.
  */
-export async function getTenantSenders(tenantId: number): Promise<SenderProfile[]> {
+export async function getTenantSenders(providedTenantId?: number): Promise<SenderProfile[]> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const tenantId = await getCurrentTenantId();
+  if (providedTenantId && providedTenantId !== tenantId) {
+    throw new Error("Unauthorized tenant access");
+  }
+
   const supabase = createAdminClient();
 
   // 1. Fetch tenant owner info
