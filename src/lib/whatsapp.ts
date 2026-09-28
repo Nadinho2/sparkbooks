@@ -6,11 +6,36 @@ const API_VERSION = "v22.0";
 const FETCH_TIMEOUT_MS = 10_000; // 10s timeout for WhatsApp API calls
 
 /**
- * Normalize a phone number for reliable comparison.
- * Strips leading + and any spaces/dashes.
+ * Normalize a phone number for reliable comparison and WhatsApp Cloud API / wa.me links.
+ * Handles Nigerian local numbers automatically:
+ * - 08031234567 (11 digits starting with 0) -> 2348031234567
+ * - 8031234567 (10 digits starting with 7, 8, 9) -> 2348031234567
+ * - +2348031234567 -> 2348031234567
  */
 export function normalizePhone(number: string): string {
-  return number.replace(/[+\s\-()]/g, "").trim();
+  if (!number) return "";
+  let cleaned = number.replace(/[^\d+]/g, "").trim();
+
+  if (cleaned.startsWith("+")) {
+    cleaned = cleaned.substring(1);
+  }
+
+  // Handle Nigerian numbers typed with country code + local leading 0: 23408031234567
+  if (cleaned.startsWith("2340") && cleaned.length === 14) {
+    return "234" + cleaned.substring(4);
+  }
+
+  // Standard 11-digit Nigerian local number: e.g. 08031234567, 070..., 090..., 081...
+  if (cleaned.startsWith("0") && cleaned.length === 11) {
+    return "234" + cleaned.substring(1);
+  }
+
+  // 10-digit Nigerian local number without leading zero: e.g. 8031234567, 708..., 901...
+  if (/^[789]\d{9}$/.test(cleaned)) {
+    return "234" + cleaned;
+  }
+
+  return cleaned;
 }
 
 export type TemplateParameter = {

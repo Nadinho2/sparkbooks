@@ -29,7 +29,7 @@ export function PartnerHeader({
 }: PartnerHeaderProps) {
   const [copied, setCopied] = useState(false);
 
-  const botNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER || "2349000000000";
+  const botNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER || "2348103253238";
   const handshakeUrl = `https://wa.me/${botNumber.replace(/\D/g, "")}?text=Hi+SparkBooks+Set+up+my+store+with+Partner+${partnerCode}`;
 
   const copyHandshakeLink = () => {

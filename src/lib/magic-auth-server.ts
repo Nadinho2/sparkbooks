@@ -165,8 +165,8 @@ export async function verifyAndConsumeMagicToken(rawToken: string): Promise<{
       ""
     ).replace(/\/$/, "");
 
-    // Clerk supports ticket consume via /sign-in?__clerk_ticket=
-    const ticketUrl = signInToken.url || `${appUrl}/sign-in?__clerk_ticket=${signInToken.token}&redirect_url=/dashboard`;
+    // Always route ticket to our local /sign-in page which consumes the ticket passwordlessly
+    const ticketUrl = `/sign-in?__clerk_ticket=${encodeURIComponent(signInToken.token)}&redirect_url=/dashboard`;
 
     return {
       success: true,

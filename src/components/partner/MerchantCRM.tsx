@@ -41,7 +41,15 @@ export function MerchantCRM({ merchants, partnerName }: MerchantCRMProps) {
   };
 
   const createWhatsAppNudgeUrl = (phone: string, shopName: string) => {
-    const cleanPhone = phone.replace(/\D/g, "");
+    let cleanPhone = phone.replace(/[^\d+]/g, "");
+    if (cleanPhone.startsWith("+")) cleanPhone = cleanPhone.substring(1);
+    if (cleanPhone.startsWith("2340") && cleanPhone.length === 14) {
+      cleanPhone = "234" + cleanPhone.substring(4);
+    } else if (cleanPhone.startsWith("0") && cleanPhone.length === 11) {
+      cleanPhone = "234" + cleanPhone.substring(1);
+    } else if (/^[789]\d{9}$/.test(cleanPhone)) {
+      cleanPhone = "234" + cleanPhone;
+    }
     const msg = `Hello ${shopName}! This is ${partnerName} from SparkBooks. I noticed you haven't recorded sales in the last few days. Is everything going well with your store or do you need any help with your WhatsApp bookkeeper?`;
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
   };

@@ -149,7 +149,7 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
     `Or open the bot directly here:\n${botUrl}\n\n` +
     `Whenever you want to view your full web ledger and reports, just text *LOGIN* here!`;
 
-  const directShareUrl = `https://api.whatsapp.com/send?phone=${normalizedPhone}&text=${encodeURIComponent(welcomeMsg)}`;
+  const directShareUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(welcomeMsg)}`;
 
   let whatsappSent = false;
   let whatsappNotice: string | undefined;

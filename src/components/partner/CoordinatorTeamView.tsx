@@ -267,7 +267,15 @@ export function CoordinatorTeamView({
               </thead>
               <tbody className="divide-y divide-rule font-sans">
                 {filteredDownlines.map((agent) => {
-                  const cleanPhone = agent.phoneNumber.replace(/\D/g, "");
+                  let cleanPhone = agent.phoneNumber.replace(/[^\d+]/g, "");
+                  if (cleanPhone.startsWith("+")) cleanPhone = cleanPhone.substring(1);
+                  if (cleanPhone.startsWith("2340") && cleanPhone.length === 14) {
+                    cleanPhone = "234" + cleanPhone.substring(4);
+                  } else if (cleanPhone.startsWith("0") && cleanPhone.length === 11) {
+                    cleanPhone = "234" + cleanPhone.substring(1);
+                  } else if (/^[789]\d{9}$/.test(cleanPhone)) {
+                    cleanPhone = "234" + cleanPhone;
+                  }
                   const coachWhatsappUrl = `https://wa.me/${cleanPhone}?text=Hi+${encodeURIComponent(agent.fullName)},+checking+in+on+your+SparkBooks+territory.+Let's+review+your+stores+this+week!`;
 
                   return (
