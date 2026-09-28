@@ -10,12 +10,18 @@ export interface OnboardShopInput {
   businessName: string;
   businessType: string;
   whatsappNumber: string;
+  shopAddress?: string;
+  landmark?: string;
+  cityLga?: string;
+  state?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /**
  * Rapid agent-assisted merchant setup.
  * Creates tenant, seeds default categories, links partner attribution,
- * and pings the merchant immediately via WhatsApp.
+ * records physical shop address & optional GPS pin, and pings the merchant immediately via WhatsApp.
  */
 export async function onboardShopAction(input: OnboardShopInput): Promise<{
   success: boolean;
@@ -51,10 +57,37 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
 
   const businessType = input.businessType || "Provisions";
 
-  // Insert tenant record with partner attribution
-  const { data: newTenant, error: insertError } = await supabase
+  // Insert tenant record with partner attribution, physical address and original registerer
+  const insertPayload: Record<string, unknown> = {
+    business_name: input.businessName.trim(),
+    business_type: businessType,
+    whatsapp_number: normalizedPhone,
+    shop_address: input.shopAddress?.trim() || null,
+    landmark: input.landmark?.trim() || null,
+    city_lga: input.cityLga?.trim() || null,
+    state: input.state?.trim() || null,
+    latitude: typeof input.latitude === "number" ? input.latitude : null,
+    longitude: typeof input.longitude === "number" ? input.longitude : null,
+    partner_id: partner.id,
+    registered_by_partner_id: partner.id,
+    onboarded_by_partner: true,
+    plan_tier: "free",
+    plan_status: "active",
+    monthly_message_count: 0,
+    monthly_message_limit: 30,
+    clerk_user_id: null,
+    last_activity_at: new Date().toISOString(),
+  };
+
+  let { data: newTenant, error: insertError } = await supabase
     .from("tenants")
-    .insert({
+    .insert(insertPayload)
+    .select("id, business_name")
+    .single();
+
+  // Fallback in case migration 015 hasn't been executed yet
+  if (insertError && (insertError.message?.includes("column") || insertError.code === "42703")) {
+    const fallbackPayload = {
       business_name: input.businessName.trim(),
       business_type: businessType,
       whatsapp_number: normalizedPhone,
@@ -66,9 +99,16 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
       monthly_message_limit: 30,
       clerk_user_id: null,
       last_activity_at: new Date().toISOString(),
-    })
-    .select("id, business_name")
-    .single();
+    };
+    const fallbackRes = await supabase
+      .from("tenants")
+      .insert(fallbackPayload)
+      .select("id, business_name")
+      .single();
+
+    newTenant = fallbackRes.data;
+    insertError = fallbackRes.error;
+  }
 
   if (insertError || !newTenant) {
     console.error("[onboardShopAction] Insert error:", insertError);

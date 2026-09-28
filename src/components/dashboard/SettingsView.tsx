@@ -12,6 +12,10 @@ interface SettingsViewProps {
     businessName: string;
     businessType: string;
     whatsappNumber: string;
+    shopAddress?: string | null;
+    landmark?: string | null;
+    cityLga?: string | null;
+    state?: string | null;
     brandLogoUrl?: string | null;
     brandColor?: string | null;
     planTier: string;
@@ -37,6 +41,10 @@ export function SettingsView({ tenant, email }: SettingsViewProps) {
   const [businessName, setBusinessName] = useState(tenant.businessName);
   const [businessType, setBusinessType] = useState(tenant.businessType);
   const [whatsappNumber, setWhatsappNumber] = useState(tenant.whatsappNumber);
+  const [shopAddress, setShopAddress] = useState(tenant.shopAddress || "");
+  const [landmark, setLandmark] = useState(tenant.landmark || "");
+  const [cityLga, setCityLga] = useState(tenant.cityLga || "");
+  const [state, setState] = useState(tenant.state || "");
   const [brandLogoUrl, setBrandLogoUrl] = useState<string>(tenant.brandLogoUrl || "");
   const [brandColor, setBrandColor] = useState<string>(tenant.brandColor || "#10B981");
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -78,6 +86,10 @@ export function SettingsView({ tenant, email }: SettingsViewProps) {
         businessName,
         businessType,
         whatsappNumber,
+        shopAddress: shopAddress.trim() || null,
+        landmark: landmark.trim() || null,
+        cityLga: cityLga.trim() || null,
+        state: state.trim() || null,
         brandColor,
         brandLogoUrl: brandLogoUrl || null,
       });
@@ -175,6 +187,72 @@ export function SettingsView({ tenant, email }: SettingsViewProps) {
                 <p className="text-[11px] text-ink-muted mt-1">
                   Primary WhatsApp number used to record sales, stock, and receive reports.
                 </p>
+              </div>
+            </div>
+
+            {/* Physical Location Fields */}
+            <div className="pt-4 border-t border-rule space-y-4">
+              <div>
+                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <span>📍</span> Physical Shop Location
+                </h3>
+                <p className="text-[11px] text-ink-muted">
+                  Displayed on your customer receipts and helps your relationship manager locate your store.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-ink mb-1">
+                  Shop / Stall / Plaza Number & Street
+                </label>
+                <input
+                  type="text"
+                  value={shopAddress}
+                  onChange={(e) => setShopAddress(e.target.value)}
+                  placeholder="e.g. Shop C-14, 2nd Floor, Tejuosho Market"
+                  className="w-full text-sm sm:text-xs px-3.5 py-2.5 border border-rule rounded-xl focus:outline-none focus:border-spark"
+                />
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-ink mb-1">
+                    Nearest Landmark
+                  </label>
+                  <input
+                    type="text"
+                    value={landmark}
+                    onChange={(e) => setLandmark(e.target.value)}
+                    placeholder="e.g. Beside UBA ATM"
+                    className="w-full text-sm sm:text-xs px-3.5 py-2.5 border border-rule rounded-xl focus:outline-none focus:border-spark"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-ink mb-1">
+                    City / LGA
+                  </label>
+                  <input
+                    type="text"
+                    value={cityLga}
+                    onChange={(e) => setCityLga(e.target.value)}
+                    placeholder="e.g. Yaba / Mainland"
+                    className="w-full text-sm sm:text-xs px-3.5 py-2.5 border border-rule rounded-xl focus:outline-none focus:border-spark"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-ink mb-1">
+                    State / Region
+                  </label>
+                  <input
+                    type="text"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                    placeholder="e.g. Lagos"
+                    className="w-full text-sm sm:text-xs px-3.5 py-2.5 border border-rule rounded-xl focus:outline-none focus:border-spark"
+                  />
+                </div>
               </div>
             </div>
           </div>

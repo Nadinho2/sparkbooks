@@ -158,6 +158,10 @@ export async function updateTenant(data: {
   businessType: string;
   businessName: string;
   whatsappNumber: string;
+  shopAddress?: string | null;
+  landmark?: string | null;
+  cityLga?: string | null;
+  state?: string | null;
   brandColor?: string | null;
   brandLogoUrl?: string | null;
 }): Promise<{ success: boolean }> {
@@ -171,6 +175,10 @@ export async function updateTenant(data: {
     whatsapp_number: data.whatsappNumber,
   };
 
+  if (data.shopAddress !== undefined) updatePayload.shop_address = data.shopAddress?.trim() || null;
+  if (data.landmark !== undefined) updatePayload.landmark = data.landmark?.trim() || null;
+  if (data.cityLga !== undefined) updatePayload.city_lga = data.cityLga?.trim() || null;
+  if (data.state !== undefined) updatePayload.state = data.state?.trim() || null;
   if (data.brandColor !== undefined) updatePayload.brand_color = data.brandColor || "#10B981";
   if (data.brandLogoUrl !== undefined) updatePayload.brand_logo_url = data.brandLogoUrl;
 
@@ -207,6 +215,10 @@ export async function setupTenant(data: {
   businessType: string;
   businessName: string;
   whatsappNumber: string;
+  shopAddress?: string | null;
+  landmark?: string | null;
+  cityLga?: string | null;
+  state?: string | null;
   brandColor?: string | null;
   brandLogoUrl?: string | null;
 }): Promise<TenantResult> {
@@ -231,6 +243,10 @@ export async function setupTenant(data: {
     whatsapp_number: data.whatsappNumber,
     clerk_user_id: userId,
   };
+  if (data.shopAddress) insertPayload.shop_address = data.shopAddress.trim();
+  if (data.landmark) insertPayload.landmark = data.landmark.trim();
+  if (data.cityLga) insertPayload.city_lga = data.cityLga.trim();
+  if (data.state) insertPayload.state = data.state.trim();
   if (data.brandColor) insertPayload.brand_color = data.brandColor;
   if (data.brandLogoUrl) insertPayload.brand_logo_url = data.brandLogoUrl;
 

@@ -401,7 +401,7 @@ export function CoordinatorTeamView({
               Reassign Territory Store
             </h2>
             <p className="text-xs text-ink-muted mb-4">
-              Move a shop under your regional team to prevent dormancy and revive customer engagement.
+              Move a shop under your regional team to prevent dormancy. The new BRM receives the store&apos;s physical address and landmark to immediately conduct in-person coaching visits.
             </p>
 
             {reassignError && (

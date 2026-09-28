@@ -137,6 +137,21 @@ export function AdminTenantDetail({ tenant }: Props) {
           label="Products"
           value={String(tenant.products.length)}
         />
+        <InfoCard
+          label="Physical Location"
+          value={
+            tenant.shopAddress ? (
+              <span className="text-xs">
+                📍 {tenant.shopAddress}
+                {tenant.landmark ? ` (${tenant.landmark})` : ""}
+                {tenant.cityLga ? `, ${tenant.cityLga}` : ""}
+                {tenant.state ? `, ${tenant.state}` : ""}
+              </span>
+            ) : (
+              <span className="text-xs text-ink-muted italic">No address on file</span>
+            )
+          }
+        />
       </div>
 
       {/* Actions */}

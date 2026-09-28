@@ -38,6 +38,12 @@ export interface TenantDetail {
   monthlyMessageCount: number;
   monthlyMessageLimit: number;
   currentPeriodEnd: string | null;
+  shopAddress?: string | null;
+  landmark?: string | null;
+  cityLga?: string | null;
+  state?: string | null;
+  partnerId?: number | null;
+  registeredByPartnerId?: number | null;
   isSuspended: boolean;
   isComped: boolean;
   paystackCustomerId: string | null;
@@ -218,6 +224,12 @@ export async function fetchTenantDetail(
     monthlyMessageCount: Number(t.monthly_message_count),
     monthlyMessageLimit: Number(t.monthly_message_limit),
     currentPeriodEnd: t.current_period_end,
+    shopAddress: (t.shop_address as string | null) ?? null,
+    landmark: (t.landmark as string | null) ?? null,
+    cityLga: (t.city_lga as string | null) ?? null,
+    state: (t.state as string | null) ?? null,
+    partnerId: (t.partner_id as number | null) ?? null,
+    registeredByPartnerId: (t.registered_by_partner_id as number | null) ?? null,
     isSuspended: t.is_suspended,
     isComped: t.is_comped,
     paystackCustomerId: t.paystack_customer_id,

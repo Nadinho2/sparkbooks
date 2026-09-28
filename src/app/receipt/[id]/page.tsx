@@ -44,6 +44,11 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
 
   const brandLogoUrl = (tenant as { brand_logo_url?: string | null })?.brand_logo_url ?? null;
   const brandColor = (tenant as { brand_color?: string | null })?.brand_color || "#10B981";
+  const shopAddress = (tenant as { shop_address?: string | null })?.shop_address ?? null;
+  const landmark = (tenant as { landmark?: string | null })?.landmark ?? null;
+  const cityLga = (tenant as { city_lga?: string | null })?.city_lga ?? null;
+  const state = (tenant as { state?: string | null })?.state ?? null;
+  const fullAddress = [shopAddress, landmark ? `(${landmark})` : null, cityLga, state].filter(Boolean).join(", ");
 
   // 3. Fetch optional linked customer debt / credit info
   let debtInfo: {
@@ -266,6 +271,11 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
           {businessPhone && (
             <p className="text-xs text-ink-muted mt-0.5">
               WhatsApp: +{businessPhone.replace(/^\+/, "")}
+            </p>
+          )}
+          {fullAddress && (
+            <p className="text-xs text-ink-muted mt-0.5 max-w-xs mx-auto">
+              📍 {fullAddress}
             </p>
           )}
           <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-paper border border-rule/80 text-ink-muted">

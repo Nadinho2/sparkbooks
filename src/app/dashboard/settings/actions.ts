@@ -71,6 +71,10 @@ export async function updateBusinessSettings(data: {
   businessName: string;
   businessType: string;
   whatsappNumber: string;
+  shopAddress?: string | null;
+  landmark?: string | null;
+  cityLga?: string | null;
+  state?: string | null;
   brandColor?: string | null;
   brandLogoUrl?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
@@ -97,6 +101,18 @@ export async function updateBusinessSettings(data: {
     whatsapp_number: data.whatsappNumber.trim(),
   };
 
+  if (data.shopAddress !== undefined) {
+    updatePayload.shop_address = data.shopAddress?.trim() || null;
+  }
+  if (data.landmark !== undefined) {
+    updatePayload.landmark = data.landmark?.trim() || null;
+  }
+  if (data.cityLga !== undefined) {
+    updatePayload.city_lga = data.cityLga?.trim() || null;
+  }
+  if (data.state !== undefined) {
+    updatePayload.state = data.state?.trim() || null;
+  }
   if (data.brandColor !== undefined) {
     updatePayload.brand_color = data.brandColor?.trim() || "#10B981";
   }
@@ -110,25 +126,22 @@ export async function updateBusinessSettings(data: {
     .eq("id", tenantId);
 
   if (error) {
-    // If brand_color or brand_logo_url columns do not exist yet, fallback to core fields
-    if (error.message.includes("brand_color") || error.message.includes("brand_logo_url")) {
-      const { error: coreErr } = await supabase
-        .from("tenants")
-        .update({
-          business_name: data.businessName.trim(),
-          business_type: data.businessType.trim(),
-          whatsapp_number: data.whatsappNumber.trim(),
-        })
-        .eq("id", tenantId);
+    // If brand or address columns do not exist yet, fallback to core fields
+    const { error: coreErr } = await supabase
+      .from("tenants")
+      .update({
+        business_name: data.businessName.trim(),
+        business_type: data.businessType.trim(),
+        whatsapp_number: data.whatsappNumber.trim(),
+      })
+      .eq("id", tenantId);
 
-      if (coreErr) return { success: false, error: coreErr.message };
+    if (coreErr) return { success: false, error: coreErr.message };
 
-      return {
-        success: true,
-        error: "Business details saved! To save your custom logo and color, please apply migration 011 in your Supabase SQL editor.",
-      };
-    }
-    return { success: false, error: error.message };
+    return {
+      success: true,
+      error: "Core business details saved! To save location & brand assets, please ensure latest database migrations are applied.",
+    };
   }
 
   revalidatePath("/dashboard");

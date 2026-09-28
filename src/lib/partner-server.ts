@@ -43,6 +43,14 @@ export interface PartnerMerchantRow {
   businessName: string;
   businessType: string;
   whatsappNumber: string;
+  shopAddress: string | null;
+  landmark: string | null;
+  cityLga: string | null;
+  state: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  registeredByPartnerName: string | null;
+  isTransferred: boolean;
   planTier: string;
   planStatus: string;
   onboardedAt: string;
@@ -319,7 +327,7 @@ function mapPartnerRow(row: Record<string, unknown>): Partner {
 export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMerchantRow[]> {
   const supabase = createAdminClient();
 
-  const { data: tenants, error } = await supabase
+  let { data: tenants, error } = await supabase
     .from("tenants")
     .select(`
       id,
@@ -331,6 +339,14 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
       created_at,
       last_activity_at,
       monthly_message_count,
+      shop_address,
+      landmark,
+      city_lga,
+      state,
+      latitude,
+      longitude,
+      partner_id,
+      registered_by_partner_id,
       ledger_entries (
         id,
         type,
@@ -340,11 +356,60 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
     .eq("partner_id", partnerId)
     .order("created_at", { ascending: false });
 
+  // Fallback if migration 015 columns are not yet applied in Supabase
+  if (error && (error.message?.includes("column") || error.code === "42703")) {
+    const fallbackRes = await supabase
+      .from("tenants")
+      .select(`
+        id,
+        business_name,
+        business_type,
+        whatsapp_number,
+        plan_tier,
+        plan_status,
+        created_at,
+        last_activity_at,
+        monthly_message_count,
+        partner_id,
+        ledger_entries (
+          id,
+          type,
+          amount
+        )
+      `)
+      .eq("partner_id", partnerId)
+      .order("created_at", { ascending: false });
+
+    tenants = fallbackRes.data as any;
+    error = fallbackRes.error;
+  }
+
   if (error || !tenants) return [];
+
+  // Fetch names of original registering partners for transferred stores
+  const registeredByIds = Array.from(
+    new Set(
+      tenants
+        .map((t: any) => t.registered_by_partner_id)
+        .filter((id): id is number => typeof id === "number" && id !== partnerId)
+    )
+  );
+
+  const registeredByMap: Record<number, string> = {};
+  if (registeredByIds.length > 0) {
+    const { data: origPartners } = await supabase
+      .from("partners")
+      .select("id, full_name")
+      .in("id", registeredByIds);
+
+    for (const p of origPartners || []) {
+      registeredByMap[p.id] = p.full_name;
+    }
+  }
 
   const now = new Date().getTime();
 
-  return tenants.map((t) => {
+  return tenants.map((t: any) => {
     const lastActivity = t.last_activity_at ? new Date(t.last_activity_at).getTime() : new Date(t.created_at).getTime();
     const diffHours = (now - lastActivity) / (1000 * 60 * 60);
     const daysInactive = Math.floor(diffHours / 24);
@@ -361,11 +426,26 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
     const totalSalesCount = sales.length;
     const totalRevenueNgn = sales.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
 
+    const isTransferred = Boolean(
+      t.registered_by_partner_id && t.registered_by_partner_id !== partnerId
+    );
+    const registeredByPartnerName = t.registered_by_partner_id
+      ? registeredByMap[t.registered_by_partner_id] || null
+      : null;
+
     return {
       tenantId: t.id,
       businessName: t.business_name || "Unnamed Shop",
       businessType: t.business_type || "General",
       whatsappNumber: t.whatsapp_number,
+      shopAddress: t.shop_address || null,
+      landmark: t.landmark || null,
+      cityLga: t.city_lga || null,
+      state: t.state || null,
+      latitude: t.latitude ? Number(t.latitude) : null,
+      longitude: t.longitude ? Number(t.longitude) : null,
+      registeredByPartnerName,
+      isTransferred,
       planTier: t.plan_tier,
       planStatus: t.plan_status,
       onboardedAt: t.created_at,

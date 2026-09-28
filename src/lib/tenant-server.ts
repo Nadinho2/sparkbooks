@@ -8,6 +8,12 @@ interface Tenant {
   businessName: string;
   businessType: string;
   whatsappNumber: string;
+  shopAddress: string | null;
+  landmark: string | null;
+  cityLga: string | null;
+  state: string | null;
+  latitude: number | null;
+  longitude: number | null;
   brandLogoUrl: string | null;
   brandColor: string;
   planTier: PlanTier;
@@ -26,6 +32,12 @@ function mapTenantRow(data: Record<string, unknown>): Tenant {
     businessName: data.business_name as string,
     businessType: data.business_type as string,
     whatsappNumber: data.whatsapp_number as string,
+    shopAddress: (data.shop_address as string | null) ?? null,
+    landmark: (data.landmark as string | null) ?? null,
+    cityLga: (data.city_lga as string | null) ?? null,
+    state: (data.state as string | null) ?? null,
+    latitude: data.latitude ? Number(data.latitude) : null,
+    longitude: data.longitude ? Number(data.longitude) : null,
     brandLogoUrl: (data.brand_logo_url as string | null) ?? null,
     brandColor: (data.brand_color as string | null) || "#10B981",
     planTier: data.plan_tier as PlanTier,
