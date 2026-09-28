@@ -4,6 +4,7 @@ const isPublicRoute = createRouteMatcher([
   "/",                          // landing page
   "/sign-in(.*)",               // local sign-in page
   "/sign-up(.*)",               // local sign-up page
+  "/auth/magic(.*)",            // passwordless magic login route
   "/onboarding",                // onboarding (auth checked at layout level)
   "/suspended",                 // suspended account page (auth checked at layout level)
   "/terms",                     // Terms of Service (public / Meta compliance)
