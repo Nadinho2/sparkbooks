@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Inter, IBM_Plex_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { SessionInactivityGuard } from "@/components/auth/SessionInactivityGuard";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -67,7 +68,10 @@ export default function RootLayout({
         <meta name="theme-color" content="#10B981" />
       </head>
       <body className="min-h-full flex flex-col">
-        <ClerkProvider telemetry={false}>{children}</ClerkProvider>
+        <ClerkProvider telemetry={false}>
+          <SessionInactivityGuard />
+          {children}
+        </ClerkProvider>
       </body>
     </html>
   );
