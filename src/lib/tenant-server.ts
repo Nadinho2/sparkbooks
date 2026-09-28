@@ -73,7 +73,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
     .from("tenants")
     .select("*")
     .eq("clerk_user_id", userId)
-    .single();
+    .maybeSingle();
 
   if (ownedTenant) {
     if (ownedTenant.is_suspended) redirect("/suspended");
@@ -95,7 +95,7 @@ export async function getCurrentTenant(): Promise<Tenant> {
     return mapTenantRow(tenant);
   }
 
-  // 3. Check for pending invitations matching user's email → auto-activate
+  // 3. Check for pending invitations or pre-registered BRM stores
   const client = await clerkClient();
   const clerkUser = await client.users.getUser(userId);
   const email = clerkUser.emailAddresses[0]?.emailAddress;
@@ -122,7 +122,34 @@ export async function getCurrentTenant(): Promise<Tenant> {
     }
   }
 
-  // 5. Auto-claim store if user signed in with phone matching an unclaimed tenant
+  // 5. Auto-claim store if user signed in with an email matching an unclaimed tenant pre-registered by a BRM
+  if (email) {
+    const cleanEmail = email.trim().toLowerCase();
+    const { data: matchedEmailTenant } = await supabase
+      .from("tenants")
+      .select("*")
+      .ilike("merchant_email", cleanEmail)
+      .is("clerk_user_id", null)
+      .maybeSingle();
+
+    if (matchedEmailTenant) {
+      await supabase
+        .from("tenants")
+        .update({ clerk_user_id: userId })
+        .eq("id", matchedEmailTenant.id);
+
+      try {
+        await client.users.updateUser(userId, {
+          publicMetadata: { tenant_id: matchedEmailTenant.id },
+        });
+      } catch {}
+
+      if (matchedEmailTenant.is_suspended) redirect("/suspended");
+      return mapTenantRow({ ...matchedEmailTenant, clerk_user_id: userId });
+    }
+  }
+
+  // 6. Auto-claim store if user signed in with phone matching an unclaimed tenant
   if (phoneNumber) {
     const rawDigits = phoneNumber.replace(/\D/g, "");
     const { data: matchedPhoneTenant } = await supabase
@@ -137,6 +164,12 @@ export async function getCurrentTenant(): Promise<Tenant> {
         .from("tenants")
         .update({ clerk_user_id: userId })
         .eq("id", matchedPhoneTenant.id);
+
+      try {
+        await client.users.updateUser(userId, {
+          publicMetadata: { tenant_id: matchedPhoneTenant.id },
+        });
+      } catch {}
 
       if (matchedPhoneTenant.is_suspended) redirect("/suspended");
       return mapTenantRow({ ...matchedPhoneTenant, clerk_user_id: userId });

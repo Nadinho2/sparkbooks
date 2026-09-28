@@ -13,6 +13,7 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
   const [businessName, setBusinessName] = useState("");
   const [businessType, setBusinessType] = useState("Provisions");
   const [whatsappNumber, setWhatsappNumber] = useState("");
+  const [merchantEmail, setMerchantEmail] = useState("");
   const [shopAddress, setShopAddress] = useState("");
   const [landmark, setLandmark] = useState("");
   const [cityLga, setCityLga] = useState("");
@@ -25,6 +26,14 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [onboardResult, setOnboardResult] = useState<{
+    businessName: string;
+    whatsappNumber: string;
+    whatsappSent: boolean;
+    whatsappNotice?: string;
+    directShareUrl?: string;
+    botUrl?: string;
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -49,6 +58,20 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
     );
   };
 
+  const handleDone = () => {
+    setSuccess(false);
+    setOnboardResult(null);
+    setBusinessName("");
+    setWhatsappNumber("");
+    setMerchantEmail("");
+    setShopAddress("");
+    setLandmark("");
+    setCityLga("");
+    setLatitude(null);
+    setLongitude(null);
+    onClose();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -59,6 +82,7 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
         businessName,
         businessType,
         whatsappNumber,
+        merchantEmail: merchantEmail.trim() || undefined,
         shopAddress: shopAddress.trim() || undefined,
         landmark: landmark.trim() || undefined,
         cityLga: cityLga.trim() || undefined,
@@ -73,19 +97,16 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
         return;
       }
 
+      setOnboardResult({
+        businessName: res.businessName || businessName,
+        whatsappNumber: res.whatsappNumber || whatsappNumber,
+        whatsappSent: !!res.whatsappSent,
+        whatsappNotice: res.whatsappNotice,
+        directShareUrl: res.directShareUrl,
+        botUrl: res.botUrl,
+      });
       setSuccess(true);
       if (onSuccess) onSuccess();
-      setTimeout(() => {
-        setSuccess(false);
-        setBusinessName("");
-        setWhatsappNumber("");
-        setShopAddress("");
-        setLandmark("");
-        setCityLga("");
-        setLatitude(null);
-        setLongitude(null);
-        onClose();
-      }, 2000);
     } catch (err) {
       setError((err as Error).message || "An unexpected error occurred.");
     } finally {
@@ -97,7 +118,7 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="bg-white rounded-2xl border border-rule shadow-xl max-w-md w-full p-6 relative max-h-[92vh] overflow-y-auto">
         <button
-          onClick={onClose}
+          onClick={handleDone}
           className="absolute top-4 right-4 text-ink-muted hover:text-ink transition-colors p-1"
           aria-label="Close"
         >
@@ -125,17 +146,88 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
           </div>
         )}
 
-        {success ? (
-          <div className="p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-money-light text-money flex items-center justify-center mx-auto mb-3">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+        {success && onboardResult ? (
+          <div className="py-2 space-y-4">
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-full bg-money-light text-money flex items-center justify-center mx-auto mb-2.5">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <h3 className="font-bold text-ink text-lg">Shop Created & Activated!</h3>
+              <p className="text-xs text-ink-muted mt-0.5">
+                <span className="font-semibold text-ink">{onboardResult.businessName}</span> ({onboardResult.whatsappNumber})
+              </p>
             </div>
-            <h3 className="font-bold text-ink text-base">Shop Activated!</h3>
-            <p className="text-xs text-ink-muted mt-1">
-              Welcome WhatsApp message sent to merchant. You can test transactions right now!
-            </p>
+
+            {/* WhatsApp delivery status banner */}
+            <div className={`p-3 rounded-xl text-xs flex items-start gap-2.5 ${
+              onboardResult.whatsappSent 
+                ? "bg-emerald-50 border border-emerald-200 text-emerald-900" 
+                : "bg-amber-50 border border-amber-200 text-amber-900"
+            }`}>
+              <span className="text-base leading-none">{onboardResult.whatsappSent ? "✅" : "📱"}</span>
+              <div>
+                <p className="font-semibold">
+                  {onboardResult.whatsappSent
+                    ? "Welcome WhatsApp Sent from Bot"
+                    : "Merchant Connection Needed"}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-relaxed opacity-90">
+                  {onboardResult.whatsappSent
+                    ? "The official greeting has been sent to the merchant's WhatsApp. They can now send sales directly."
+                    : "Due to WhatsApp privacy rules, the merchant must tap the link below or send 1 message to open the chat window."}
+                </p>
+              </div>
+            </div>
+
+            {/* Immediate Action Buttons for Field BRM */}
+            <div className="space-y-2 pt-1">
+              {onboardResult.directShareUrl && (
+                <a
+                  href={onboardResult.directShareUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 px-4 rounded-xl bg-[#25D366] hover:bg-[#20bd5a] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99]"
+                >
+                  <span className="text-base">💬</span>
+                  <span>Send Welcome Message to Merchant</span>
+                </a>
+              )}
+
+              {onboardResult.botUrl && (
+                <a
+                  href={onboardResult.botUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-ink font-semibold text-xs flex items-center justify-center gap-2 transition-all"
+                >
+                  <span>🤖</span>
+                  <span>Open SparkBooks Bot on Merchant Phone ↗</span>
+                </a>
+              )}
+            </div>
+
+            {/* In-person test prompt */}
+            <div className="bg-sand-light rounded-xl p-3 border border-rule text-xs">
+              <p className="font-semibold text-ink flex items-center gap-1.5 mb-1">
+                <span>⚡</span> Test First Sale with Merchant:
+              </p>
+              <p className="text-ink-muted text-[11px]">
+                Ask the merchant to text to this chat:
+              </p>
+              <div className="mt-1 bg-white p-2 rounded-lg border border-rule font-mono text-[11px] text-ink select-all">
+                Sold 2 items for 10,000 cash
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDone}
+              className="w-full py-2.5 rounded-xl border border-rule hover:bg-sand-light text-ink font-semibold text-xs transition-colors"
+            >
+              Done & Return to Portfolio
+            </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3.5">
@@ -199,6 +291,23 @@ export function OnboardShopModal({ isOpen, onClose, onSuccess }: OnboardShopModa
               />
               <p className="text-[11px] text-ink-muted mt-0.5">
                 Active WhatsApp number for instant automated bookkeeping prompts.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-ink mb-1 flex items-center justify-between">
+                <span>Merchant Email Address</span>
+                <span className="text-[10px] text-forest font-medium bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Recommended</span>
+              </label>
+              <input
+                type="email"
+                placeholder="e.g. storeowner@gmail.com"
+                value={merchantEmail}
+                onChange={(e) => setMerchantEmail(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-lg border border-rule bg-sand-light focus:bg-white focus:outline-none focus:border-money transition-colors"
+              />
+              <p className="text-[11px] text-ink-muted mt-0.5">
+                Enables the merchant to automatically claim their store upon web sign-up.
               </p>
             </div>
 

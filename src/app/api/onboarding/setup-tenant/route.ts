@@ -23,12 +23,78 @@ export async function POST(request: Request) {
     .from("tenants")
     .select("id")
     .eq("clerk_user_id", userId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     return NextResponse.json(
       { error: "Tenant already exists" },
       { status: 409 },
+    );
+  }
+
+  // Check if an unclaimed tenant with this WhatsApp number exists (pre-registered by BRM)
+  const cleanDigits = whatsappNumber.replace(/\D/g, "");
+  const suffix10 = cleanDigits.slice(-10);
+
+  const { data: unclaimedByPhone } = await supabase
+    .from("tenants")
+    .select("id, business_name, business_type, whatsapp_number")
+    .or(`whatsapp_number.ilike.%${suffix10}%,whatsapp_number.eq.${whatsappNumber.trim()}`)
+    .is("clerk_user_id", null)
+    .maybeSingle();
+
+  if (unclaimedByPhone) {
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(userId);
+    const email = clerkUser.emailAddresses[0]?.emailAddress?.toLowerCase();
+
+    const claimPayload: Record<string, any> = {
+      clerk_user_id: userId,
+    };
+    if (email) claimPayload.merchant_email = email;
+    if (brandColor) claimPayload.brand_color = brandColor;
+    if (brandLogoUrl) claimPayload.brand_logo_url = brandLogoUrl;
+
+    await supabase
+      .from("tenants")
+      .update(claimPayload)
+      .eq("id", unclaimedByPhone.id);
+
+    try {
+      await client.users.updateUser(userId, {
+        publicMetadata: { tenant_id: unclaimedByPhone.id },
+      });
+    } catch {}
+
+    const { data: existingCategories } = await supabase
+      .from("categories")
+      .select("id, name")
+      .eq("tenant_id", unclaimedByPhone.id);
+
+    return NextResponse.json({
+      id: unclaimedByPhone.id,
+      businessName: unclaimedByPhone.business_name,
+      businessType: unclaimedByPhone.business_type,
+      whatsappNumber: unclaimedByPhone.whatsapp_number,
+      categories: existingCategories || [],
+      claimedExisting: true,
+    });
+  }
+
+  // Check if this WhatsApp number is already owned by another claimed tenant
+  const { data: alreadyClaimed } = await supabase
+    .from("tenants")
+    .select("id, business_name")
+    .or(`whatsapp_number.ilike.%${suffix10}%,whatsapp_number.eq.${whatsappNumber.trim()}`)
+    .not("clerk_user_id", "is", null)
+    .maybeSingle();
+
+  if (alreadyClaimed) {
+    return NextResponse.json(
+      {
+        error: `A shop is already registered with WhatsApp number ${whatsappNumber} (${alreadyClaimed.business_name}). Please sign in with the original account or contact support.`,
+      },
+      { status: 409 }
     );
   }
 

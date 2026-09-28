@@ -126,3 +126,103 @@ export async function sendTeamInviteEmail(
     return { success: false, error: err?.message || "Email delivery failed" };
   }
 }
+
+/**
+ * Branded transactional email sent to a newly onboarded merchant
+ * when their BRM includes their email address.
+ */
+export async function sendMerchantWelcomeEmail(
+  toEmail: string,
+  businessName: string,
+  brmName: string,
+  botUrl: string
+): Promise<{ success: boolean; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn("RESEND_API_KEY not configured — skipping merchant welcome email");
+    return { success: false, error: "Email service not configured" };
+  }
+
+  const siteUrl = (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "https://sparkbooks.vercel.app"
+  ).replace(/\/$/, "");
+
+  const content = `
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="padding-bottom:12px;">
+          <h1 style="margin:0;font-size:20px;font-weight:600;color:${BRAND.ink};letter-spacing:-0.3px;">
+            Welcome to SparkBooks, ${businessName}!
+          </h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom:16px;">
+          <p style="margin:0;font-size:14px;color:${BRAND.muted};line-height:1.6;">
+            Your store bookkeeping ledger has been successfully activated by your dedicated Business Relationship Manager, <strong style="color:${BRAND.ink};">${brmName}</strong>.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom:20px;">
+          <div style="background:#f3f4f6;border-radius:12px;padding:16px;">
+            <p style="margin:0 0 8px 0;font-size:13px;font-weight:600;color:${BRAND.ink};">
+              How to start recording sales on WhatsApp:
+            </p>
+            <p style="margin:0;font-size:13px;color:${BRAND.muted};line-height:1.5;">
+              Just send a WhatsApp message to our bot like: <br/>
+              <code style="background:#fff;padding:2px 6px;border-radius:4px;color:${BRAND.money};font-weight:600;">"Sold 2 items for 10,000 cash"</code>
+            </p>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-bottom:16px;">
+          <a
+            href="${botUrl}"
+            style="display:inline-block;padding:12px 24px;background-color:${BRAND.money};color:${BRAND.white};text-decoration:none;border-radius:999px;font-size:14px;font-weight:600;text-align:center;margin-right:8px;"
+          >
+            Open WhatsApp Bot ↗
+          </a>
+          <a
+            href="${siteUrl}/sign-up"
+            style="display:inline-block;padding:12px 24px;background-color:${BRAND.ink};color:${BRAND.white};text-decoration:none;border-radius:999px;font-size:14px;font-weight:600;text-align:center;"
+          >
+            Create Web Login
+          </a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-top:12px;">
+          <p style="margin:0;font-size:12px;color:${BRAND.muted};line-height:1.6;">
+            Signing in on the web with <strong style="color:${BRAND.ink};">${toEmail}</strong> will automatically open your full live financial dashboard.
+          </p>
+        </td>
+      </tr>
+    </table>`;
+
+  const fromEmail = process.env.RESEND_FROM_EMAIL || "SparkBooks <onboarding@resend.dev>";
+
+  try {
+    const resend = new Resend(apiKey);
+    const res = await resend.emails.send({
+      from: fromEmail,
+      to: toEmail,
+      subject: `Your SparkBooks store (${businessName}) has been activated!`,
+      html: wrapper(content),
+    });
+
+    if (res.error) {
+      console.warn("Resend email delivery notice:", res.error.message);
+      return { success: false, error: res.error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.warn("Resend email delivery exception:", err?.message || err);
+    return { success: false, error: err?.message || "Email delivery failed" };
+  }
+}
+

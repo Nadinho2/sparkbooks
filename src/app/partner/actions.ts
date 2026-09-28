@@ -2,7 +2,7 @@
 
 import { requirePartner } from "@/lib/partner-server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { normalizePhone, sendTextMessage } from "@/lib/whatsapp";
+import { normalizePhone, sendTextMessage, getWhatsAppBotUrl } from "@/lib/whatsapp";
 import { BUSINESS_CATEGORIES } from "@/lib/tenant";
 import { revalidatePath } from "next/cache";
 
@@ -10,6 +10,7 @@ export interface OnboardShopInput {
   businessName: string;
   businessType: string;
   whatsappNumber: string;
+  merchantEmail?: string;
   shopAddress?: string;
   landmark?: string;
   cityLga?: string;
@@ -21,11 +22,17 @@ export interface OnboardShopInput {
 /**
  * Rapid agent-assisted merchant setup.
  * Creates tenant, seeds default categories, links partner attribution,
- * records physical shop address & optional GPS pin, and pings the merchant immediately via WhatsApp.
+ * records physical shop address & optional GPS pin, and connects the merchant immediately via WhatsApp.
  */
 export async function onboardShopAction(input: OnboardShopInput): Promise<{
   success: boolean;
   tenantId?: number;
+  businessName?: string;
+  whatsappNumber?: string;
+  whatsappSent?: boolean;
+  whatsappNotice?: string;
+  directShareUrl?: string;
+  botUrl?: string;
   error?: string;
 }> {
   const partner = await requirePartner();
@@ -39,6 +46,7 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
   }
 
   const normalizedPhone = normalizePhone(input.whatsappNumber.trim());
+  const merchantEmail = input.merchantEmail?.trim().toLowerCase() || null;
   const supabase = createAdminClient();
 
   // Check if store with this phone already exists
@@ -59,11 +67,12 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
 
   const partnerIdToSet = partner.id && partner.id > 0 ? partner.id : null;
 
-  // Insert tenant record with partner attribution, physical address and original registerer
+  // Insert tenant record with partner attribution, physical address, merchant email and original registerer
   const insertPayload: Record<string, unknown> = {
     business_name: input.businessName.trim(),
     business_type: businessType,
     whatsapp_number: normalizedPhone,
+    merchant_email: merchantEmail,
     shop_address: input.shopAddress?.trim() || null,
     landmark: input.landmark?.trim() || null,
     city_lga: input.cityLga?.trim() || null,
@@ -87,7 +96,7 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
     .select("id, business_name")
     .single();
 
-  // Fallback in case migration 015 hasn't been executed yet
+  // Fallback in case migrations (015 or 016) haven't been executed yet
   if (insertError && (insertError.message?.includes("column") || insertError.code === "42703")) {
     const fallbackPayload = {
       business_name: input.businessName.trim(),
@@ -130,22 +139,62 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
     console.warn("Could not seed categories for tenant:", catErr);
   }
 
-  // Trigger instant WhatsApp greeting
-  try {
-    const welcomeMsg =
-      `👋 Welcome to *SparkBooks*, ${newTenant.business_name}!\n\n` +
-      `Your store bookkeeping ledger has been activated by your business manager, *${partner.fullName}*.\n\n` +
-      `To test it out, send your first sale right now to this chat:\n` +
-      `👉 _"Sold 2 items for 10,000 cash"_\n\n` +
-      `Whenever you want to view your full web ledger and reports, just text *LOGIN* here!`;
+  // Generate bot activation link and merchant direct share link
+  const botUrl = getWhatsAppBotUrl(newTenant.business_name);
+  const welcomeMsg =
+    `👋 Welcome to *SparkBooks*, ${newTenant.business_name}!\n\n` +
+    `Your store bookkeeping ledger has been activated by your business manager, *${partner.fullName}*.\n\n` +
+    `To test it out, send your first sale right now to this chat:\n` +
+    `👉 _"Sold 2 items for 10,000 cash"_\n\n` +
+    `Or open the bot directly here:\n${botUrl}\n\n` +
+    `Whenever you want to view your full web ledger and reports, just text *LOGIN* here!`;
 
-    await sendTextMessage(normalizedPhone, welcomeMsg);
+  const directShareUrl = `https://api.whatsapp.com/send?phone=${normalizedPhone}&text=${encodeURIComponent(welcomeMsg)}`;
+
+  let whatsappSent = false;
+  let whatsappNotice: string | undefined;
+
+  // Attempt instant WhatsApp greeting via Cloud API
+  try {
+    const waRes = await sendTextMessage(normalizedPhone, welcomeMsg);
+    if (waRes.success) {
+      whatsappSent = true;
+    } else {
+      console.warn("[onboardShopAction] WhatsApp Cloud API notice:", waRes.error, waRes.errorCode);
+      whatsappNotice = waRes.errorCode === 131047
+        ? "Outside Meta 24h window: Merchant must send the first message to the bot."
+        : (waRes.error || "Automated WhatsApp delivery pending.");
+    }
   } catch (waErr) {
     console.warn("Could not send welcome WhatsApp message:", waErr);
   }
 
+  // Send branded email invitation if merchant email was provided
+  if (merchantEmail) {
+    try {
+      const { sendMerchantWelcomeEmail } = await import("@/lib/email");
+      await sendMerchantWelcomeEmail(
+        merchantEmail,
+        newTenant.business_name,
+        partner.fullName,
+        botUrl
+      );
+    } catch (emailErr) {
+      console.warn("Could not send merchant welcome email:", emailErr);
+    }
+  }
+
   revalidatePath("/partner");
-  return { success: true, tenantId: newTenant.id };
+  return {
+    success: true,
+    tenantId: newTenant.id,
+    businessName: newTenant.business_name,
+    whatsappNumber: normalizedPhone,
+    whatsappSent,
+    whatsappNotice,
+    directShareUrl,
+    botUrl,
+  };
 }
 
 /**
