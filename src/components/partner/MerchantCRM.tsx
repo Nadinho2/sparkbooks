@@ -32,12 +32,14 @@ export function MerchantCRM({ merchants, partnerName }: MerchantCRMProps) {
     dormant: merchants.filter((m) => m.healthStatus === "dormant").length,
   };
 
-  const formatNgn = (n: number) => {
-    return new Intl.NumberFormat("en-NG", {
-      style: "currency",
-      currency: "NGN",
-      minimumFractionDigits: 0,
-    }).format(n);
+  const formatDateTime = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-NG", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   const createWhatsAppNudgeUrl = (phone: string, shopName: string) => {
@@ -151,7 +153,7 @@ export function MerchantCRM({ merchants, partnerName }: MerchantCRMProps) {
                   <th className="py-3 px-4">WhatsApp Contact</th>
                   <th className="py-3 px-4">Plan</th>
                   <th className="py-3 px-4">Health Status</th>
-                  <th className="py-3 px-4">Total Recorded</th>
+                  <th className="py-3 px-4">Sales Activity</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -222,11 +224,12 @@ export function MerchantCRM({ merchants, partnerName }: MerchantCRMProps) {
                         )}
                       </td>
                       <td className="py-3 px-4 font-mono">
-                        <div className="font-semibold text-ink">
-                          {formatNgn(m.totalRevenueNgn)}
+                        <div className="font-semibold text-ink flex items-center gap-1.5">
+                          <span>🧾</span>
+                          <span>{m.totalSalesCount} {m.totalSalesCount === 1 ? "sale" : "sales"} logged</span>
                         </div>
-                        <div className="text-[11px] text-ink-muted">
-                          {m.totalSalesCount} sales logged
+                        <div className="text-[11px] text-ink-muted mt-0.5">
+                          {m.lastTransactionAt ? `Last: ${formatDateTime(m.lastTransactionAt)}` : "No activity yet"}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-right">
@@ -309,12 +312,12 @@ export function MerchantCRM({ merchants, partnerName }: MerchantCRMProps) {
                   </div>
 
                   <div className="flex items-center justify-between text-xs bg-sand-light/50 p-2.5 rounded-lg font-mono">
-                    <div>
-                      <span className="text-ink-muted">Recorded: </span>
-                      <span className="font-semibold text-ink">{formatNgn(m.totalRevenueNgn)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span>🧾</span>
+                      <span className="font-semibold text-ink">{m.totalSalesCount} {m.totalSalesCount === 1 ? "sale" : "sales"} logged</span>
                     </div>
-                    <div className="text-ink-muted">
-                      {m.totalSalesCount} sales
+                    <div className="text-ink-muted text-[11px]">
+                      {m.lastTransactionAt ? formatDateTime(m.lastTransactionAt) : "No activity yet"}
                     </div>
                   </div>
 

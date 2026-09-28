@@ -795,7 +795,7 @@ export async function fetchAdminPartners(): Promise<AdminPartnerRow[]> {
         account_name,
         status,
         created_at,
-        tenants(
+        tenants!tenants_partner_id_fkey(
           id,
           plan_tier,
           plan_status,
@@ -807,6 +807,10 @@ export async function fetchAdminPartners(): Promise<AdminPartnerRow[]> {
       .order("created_at", { ascending: false }),
     supabase.from("partners").select("id, full_name, coordinator_id"),
   ]);
+
+  if (partnersRes.error) {
+    console.error("[fetchAdminPartners] Error fetching partners:", partnersRes.error);
+  }
 
   let partnersData: Record<string, unknown>[] = (partnersRes.data as unknown as Record<string, unknown>[]) ?? [];
   let allPartnersData: Record<string, unknown>[] = (allPartnersRes.data as unknown as Record<string, unknown>[]) ?? [];
@@ -827,7 +831,7 @@ export async function fetchAdminPartners(): Promise<AdminPartnerRow[]> {
         account_name,
         status,
         created_at,
-        tenants(
+        tenants!tenants_partner_id_fkey(
           id,
           plan_tier,
           plan_status,

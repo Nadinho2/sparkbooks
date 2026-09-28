@@ -59,7 +59,7 @@ export interface PartnerMerchantRow {
   daysInactive: number;
   monthlyMessageCount: number;
   totalSalesCount: number;
-  totalRevenueNgn: number;
+  lastTransactionAt: string | null;
 }
 
 export interface PartnerEarnings {
@@ -405,7 +405,7 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
       ledger_entries (
         id,
         type,
-        amount
+        created_at
       )
     `)
     .eq("partner_id", partnerId)
@@ -429,7 +429,7 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
         ledger_entries (
           id,
           type,
-          amount
+          created_at
         )
       `)
       .eq("partner_id", partnerId)
@@ -476,10 +476,17 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
       healthStatus = "at_risk";
     }
 
-    const ledger = (t.ledger_entries as unknown as Array<{ id: number; type: string; amount: number }>) || [];
+    const ledger = (t.ledger_entries as unknown as Array<{ id: number; type: string; created_at: string }>) || [];
     const sales = ledger.filter((l) => l.type === "sale");
     const totalSalesCount = sales.length;
-    const totalRevenueNgn = sales.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+
+    // Latest transaction timestamp if any
+    let latestTxTime: string | null = null;
+    if (sales.length > 0) {
+      const sorted = [...sales].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      latestTxTime = sorted[0].created_at;
+    }
+    const lastTransactionAt = latestTxTime || t.last_activity_at || null;
 
     const isTransferred = Boolean(
       t.registered_by_partner_id && t.registered_by_partner_id !== partnerId
@@ -509,7 +516,7 @@ export async function getPartnerPortfolio(partnerId: number): Promise<PartnerMer
       daysInactive,
       monthlyMessageCount: t.monthly_message_count || 0,
       totalSalesCount,
-      totalRevenueNgn,
+      lastTransactionAt,
     };
   });
 }
@@ -533,7 +540,7 @@ export async function getPartnerEarnings(partnerId: number): Promise<PartnerEarn
       .from("partners")
       .select(`
         id,
-        tenants(id, last_activity_at, created_at)
+        tenants!tenants_partner_id_fkey(id, last_activity_at, created_at)
       `)
       .eq("coordinator_id", partnerId),
   ]);
@@ -616,13 +623,12 @@ export async function getCoordinatorDownlines(coordinatorId: number): Promise<Co
       status,
       region,
       created_at,
-      tenants (
+      tenants!tenants_partner_id_fkey (
         id,
         plan_tier,
         plan_status,
         last_activity_at,
-        created_at,
-        ledger_entries (id, type, amount)
+        created_at
       )
     `)
     .eq("coordinator_id", coordinatorId)
