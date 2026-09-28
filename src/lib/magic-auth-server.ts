@@ -10,7 +10,7 @@ export interface MagicTokenResult {
 
 /**
  * Generate a single-use secure login token for a tenant.
- * Valid for 15 minutes.
+ * Valid for 24 hours.
  */
 export async function generateMagicLoginToken(
   tenantId: number,
@@ -24,7 +24,7 @@ export async function generateMagicLoginToken(
   // 2. Hash token with SHA-256 for secure DB storage
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
   // 3. Save token
   const { error } = await supabase.from("magic_auth_tokens").insert({
@@ -90,18 +90,6 @@ export async function verifyAndConsumeMagicToken(rawToken: string): Promise<{
     return { success: false, error: "This login link has expired. Send 'LOGIN' on WhatsApp for a fresh link." };
   }
 
-  // 2. Mark token as consumed atomically (prevents concurrent replay attacks)
-  const { data: updatedRows, error: updateErr } = await supabase
-    .from("magic_auth_tokens")
-    .update({ used_at: new Date().toISOString() })
-    .eq("id", tokenRecord.id)
-    .is("used_at", null)
-    .select("id");
-
-  if (updateErr || !updatedRows || updatedRows.length === 0) {
-    return { success: false, error: "This login link has already been used. Please request a new one on WhatsApp." };
-  }
-
   const rawTenant = tokenRecord.tenants as unknown;
   const tenant = (Array.isArray(rawTenant) ? rawTenant[0] : rawTenant) as Record<string, unknown> | null;
   if (!tenant) {
@@ -113,37 +101,59 @@ export async function verifyAndConsumeMagicToken(rawToken: string): Promise<{
 
   const client = await clerkClient();
 
-  // 3. Resolve or Create Clerk user
+  // 2. Resolve or Create Clerk user
   try {
     if (!clerkUserId) {
-      // Find if a Clerk user exists with this phone number or synthetic email
-      const safePhone = (tokenRecord.phone_number || "").replace(/\s+/g, "");
-      const syntheticEmail = `merchant_${tenantId}_${Date.now()}@sparkbooks.internal`;
+      const safePhone = (tokenRecord.phone_number || tenant.whatsapp_number || "").replace(/\s+/g, "");
+      const candidateEmail = (tenant.merchant_email && (tenant.merchant_email as string).trim())
+        ? (tenant.merchant_email as string).trim().toLowerCase()
+        : `merchant_${tenantId}_${Date.now()}@sparkbooks.io`;
 
-      let createdUser;
+      // 2A. Check if user already exists in Clerk by candidate email
       try {
-        createdUser = await client.users.createUser({
+        const existingUsers = await client.users.getUserList({ emailAddress: [candidateEmail] });
+        if (existingUsers.data && existingUsers.data.length > 0) {
+          clerkUserId = existingUsers.data[0].id;
+          console.log(`[verifyAndConsumeMagicToken] Linked to existing Clerk user by email: ${clerkUserId}`);
+        }
+      } catch (searchErr) {
+        console.warn("[verifyAndConsumeMagicToken] Search by email error:", searchErr);
+      }
+
+      // 2B. Check if user already exists in Clerk by base username
+      if (!clerkUserId) {
+        const baseUsername = `merchant_${tenantId}`;
+        try {
+          const existingByUsername = await client.users.getUserList({ username: [baseUsername] });
+          if (existingByUsername.data && existingByUsername.data.length > 0) {
+            clerkUserId = existingByUsername.data[0].id;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 2C. Create new Clerk user with required username and valid email
+      if (!clerkUserId) {
+        const uniqueUsername = `merchant_${tenantId}_${Date.now().toString(36)}`;
+        console.log(`[verifyAndConsumeMagicToken] Creating new Clerk user with username: ${uniqueUsername}, email: ${candidateEmail}`);
+
+        const createdUser = await client.users.createUser({
+          username: uniqueUsername,
+          emailAddress: [candidateEmail],
           firstName: (tenant.business_name as string) || "Merchant",
+          skipPasswordRequirement: true,
           publicMetadata: {
             tenantId,
             phoneNumber: safePhone,
             role: "owner",
             onboardedVia: "whatsapp_magic_link",
           },
-          // Create user with synthetic email so Clerk auth is always valid
-          emailAddress: [syntheticEmail],
-          skipPasswordRequirement: true,
         });
-      } catch (createErr) {
-        console.warn("[verifyAndConsumeMagicToken] User creation with email failed, fallback:", createErr);
-        createdUser = await client.users.createUser({
-          firstName: (tenant.business_name as string) || "Merchant",
-          publicMetadata: { tenantId, role: "owner" },
-          skipPasswordRequirement: true,
-        });
-      }
 
-      clerkUserId = createdUser.id;
+        clerkUserId = createdUser.id;
+        console.log(`[verifyAndConsumeMagicToken] Created Clerk user: ${clerkUserId}`);
+      }
 
       // Link to tenant in database
       await supabase
@@ -152,20 +162,19 @@ export async function verifyAndConsumeMagicToken(rawToken: string): Promise<{
         .eq("id", tenantId);
     }
 
-    // 4. Create Clerk SignInToken (official passwordless ticket)
+    // 3. Create Clerk SignInToken (official passwordless ticket)
     const signInToken = await client.signInTokens.createSignInToken({
       userId: clerkUserId,
-      expiresInSeconds: 300, // 5 minutes to consume
+      expiresInSeconds: 600, // 10 minutes to consume
     });
 
-    // If signInToken.url is provided by Clerk, use it; otherwise route to /sign-in ticket consume
-    const appUrl = (
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      ""
-    ).replace(/\/$/, "");
+    // 4. Mark token as consumed atomically in DB
+    await supabase
+      .from("magic_auth_tokens")
+      .update({ used_at: new Date().toISOString() })
+      .eq("id", tokenRecord.id);
 
-    // Always route ticket to our local /sign-in page which consumes the ticket passwordlessly
+    // Route ticket to local /sign-in page which consumes the ticket passwordlessly
     const ticketUrl = `/sign-in?__clerk_ticket=${encodeURIComponent(signInToken.token)}&redirect_url=/dashboard`;
 
     return {

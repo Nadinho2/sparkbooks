@@ -9,27 +9,23 @@ function SignInContent() {
   const searchParams = useSearchParams();
   const ticket = searchParams.get("__clerk_ticket");
   const isExpired = searchParams.get("expired") === "1";
+  const errorFromQuery = searchParams.get("error");
   const redirectUrl = searchParams.get("redirect_url") || "/dashboard";
 
   const [ticketState, setTicketState] = useState<{
     status: "idle" | "verifying" | "success" | "error";
     errorMsg?: string;
   }>(() => ({
-    status: ticket ? "verifying" : "idle",
+    status: ticket ? "verifying" : errorFromQuery ? "error" : "idle",
+    errorMsg: errorFromQuery || undefined,
   }));
 
   const clerk = useClerk();
-  const { isSignedIn } = useAuth();
+  const { isLoaded } = useAuth();
 
   useEffect(() => {
     if (!ticket) return;
-
-    if (isSignedIn) {
-      window.location.href = redirectUrl;
-      return;
-    }
-
-    if (!clerk.loaded || !clerk.client) return;
+    if (!isLoaded || !clerk.loaded || !clerk.client) return;
 
     let active = true;
 
@@ -42,7 +38,12 @@ function SignInContent() {
         if (!active) return;
         if (res.status === "complete" && res.createdSessionId) {
           setTicketState({ status: "success" });
-          await clerk.setActive({ session: res.createdSessionId });
+          await clerk.setActive({
+            session: res.createdSessionId,
+            navigate: () => {
+              window.location.href = redirectUrl;
+            },
+          });
           window.location.href = redirectUrl;
         } else {
           setTicketState({
@@ -51,8 +52,31 @@ function SignInContent() {
           });
         }
       })
-      .catch((err: any) => {
+      .catch(async (err: any) => {
         if (!active) return;
+        const isSessionConflict = err.errors?.some((e: any) =>
+          e.code === "session_exists" || e.code === "already_signed_in"
+        );
+        if (isSessionConflict) {
+          try {
+            await clerk.signOut();
+            const retryRes = await clerk.client.signIn.create({ strategy: "ticket", ticket });
+            if (retryRes.status === "complete" && retryRes.createdSessionId) {
+              setTicketState({ status: "success" });
+              await clerk.setActive({
+                session: retryRes.createdSessionId,
+                navigate: () => {
+                  window.location.href = redirectUrl;
+                },
+              });
+              window.location.href = redirectUrl;
+              return;
+            }
+          } catch (retryErr) {
+            console.error("Retry ticket authentication error:", retryErr);
+          }
+        }
+
         console.error("Clerk ticket authentication error:", err);
         setTicketState({
           status: "error",
@@ -63,7 +87,7 @@ function SignInContent() {
     return () => {
       active = false;
     };
-  }, [ticket, clerk, isSignedIn, redirectUrl]);
+  }, [ticket, isLoaded, clerk, redirectUrl]);
 
   return (
     <>
@@ -90,13 +114,24 @@ function SignInContent() {
         </div>
       )}
 
-      {/* Error message if ticket failed or expired */}
+      {/* Error message if ticket failed, was used, or expired */}
       {ticketState.status === "error" && ticketState.errorMsg && (
-        <div className="mb-6 w-full max-w-md bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 shadow-xs">
-          <p className="font-semibold flex items-center gap-1.5">
+        <div className="mb-6 w-full max-w-md bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 shadow-xs animate-in fade-in duration-200">
+          <p className="font-semibold flex items-center gap-1.5 text-sm">
             <span>⚠️</span> Passwordless Login Notice
           </p>
-          <p className="mt-1 text-amber-800">{ticketState.errorMsg}</p>
+          <p className="mt-1.5 text-amber-800 leading-relaxed">{ticketState.errorMsg}</p>
+          <div className="mt-3 pt-3 border-t border-amber-200/60 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-amber-700">Need a fresh login link?</span>
+            <a
+              href="https://wa.me/2349132514101?text=LOGIN"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#25D366] hover:bg-[#20ba5a] text-white font-medium rounded-lg text-xs shadow-xs transition"
+            >
+              <span>📲</span> Text LOGIN on WhatsApp
+            </a>
+          </div>
         </div>
       )}
 

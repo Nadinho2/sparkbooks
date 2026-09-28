@@ -654,7 +654,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         `🔐 *SparkBooks Web Dashboard Login*\n\n` +
         `Tap this secure link to open your live dashboard:\n` +
         `👉 ${loginUrl}\n\n` +
-        `⏳ _Valid for 15 minutes. Password not required._`;
+        `⏳ _Valid for 24 hours. Password not required._`;
 
       await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
     } catch (err) {

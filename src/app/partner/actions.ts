@@ -139,6 +139,16 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
     console.warn("Could not seed categories for tenant:", catErr);
   }
 
+  // Generate magic login link for instant onboarding access
+  let magicLoginUrl = "";
+  try {
+    const { generateMagicLoginToken } = await import("@/lib/magic-auth-server");
+    const { loginUrl } = await generateMagicLoginToken(newTenant.id, normalizedPhone);
+    magicLoginUrl = loginUrl;
+  } catch (magicErr) {
+    console.warn("[onboardShopAction] Could not generate initial magic login token:", magicErr);
+  }
+
   // Generate bot activation link and merchant direct share link
   const botUrl = getWhatsAppBotUrl(newTenant.business_name);
   const welcomeMsg =
@@ -146,8 +156,11 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
     `Your store bookkeeping ledger has been activated by your business manager, *${partner.fullName}*.\n\n` +
     `To test it out, send your first sale right now to this chat:\n` +
     `👉 _"Sold 2 items for 10,000 cash"_\n\n` +
+    (magicLoginUrl
+      ? `🔐 *Live Web Dashboard (Password not required):*\n👉 ${magicLoginUrl}\n\n`
+      : "") +
     `Or open the bot directly here:\n${botUrl}\n\n` +
-    `Whenever you want to view your full web ledger and reports, just text *LOGIN* here!`;
+    `Whenever you need a fresh login link, just text *LOGIN* here!`;
 
   const directShareUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(welcomeMsg)}`;
 
