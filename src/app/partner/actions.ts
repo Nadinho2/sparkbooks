@@ -57,6 +57,8 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
 
   const businessType = input.businessType || "Provisions";
 
+  const partnerIdToSet = partner.id && partner.id > 0 ? partner.id : null;
+
   // Insert tenant record with partner attribution, physical address and original registerer
   const insertPayload: Record<string, unknown> = {
     business_name: input.businessName.trim(),
@@ -68,8 +70,8 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
     state: input.state?.trim() || null,
     latitude: typeof input.latitude === "number" ? input.latitude : null,
     longitude: typeof input.longitude === "number" ? input.longitude : null,
-    partner_id: partner.id,
-    registered_by_partner_id: partner.id,
+    partner_id: partnerIdToSet,
+    registered_by_partner_id: partnerIdToSet,
     onboarded_by_partner: true,
     plan_tier: "free",
     plan_status: "active",
@@ -91,7 +93,7 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
       business_name: input.businessName.trim(),
       business_type: businessType,
       whatsapp_number: normalizedPhone,
-      partner_id: partner.id,
+      partner_id: partnerIdToSet,
       onboarded_by_partner: true,
       plan_tier: "free",
       plan_status: "active",
@@ -284,7 +286,7 @@ export async function recruitDownlineBrmAction(input: RecruitDownlineBrmInput): 
       partner_code: partnerCode,
       commission_rate: 20.0, // 20% to downline Field BRM, 10% override to coordinator
       role: "field_agent",
-      coordinator_id: coordinator.id,
+      coordinator_id: coordinator.id && coordinator.id > 0 ? coordinator.id : null,
       region: input.region?.trim() || coordinator.region || null,
       status: "pending",
       updated_at: new Date().toISOString(),

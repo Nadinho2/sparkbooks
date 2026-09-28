@@ -102,7 +102,7 @@ export async function requirePartner(): Promise<Partner> {
     .from("partners")
     .select("*")
     .eq("clerk_user_id", userId)
-    .single();
+    .maybeSingle();
 
   // 2. Auto-link fallback: if not matched by clerk_user_id, check user's email or phone in Clerk
   if (!partnerRow) {
@@ -190,6 +190,61 @@ export async function requirePartner(): Promise<Partner> {
 
   if (role !== "partner" && role !== "admin") {
     redirect("/dashboard");
+  }
+
+  // If this is an admin accessing partner workspace without an existing partner row,
+  // auto-provision a real record in `partners` so foreign keys (partner_id) work properly.
+  if (!partnerRow && role === "admin") {
+    try {
+      const { clerkClient } = await import("@clerk/nextjs/server");
+      const client = await clerkClient();
+      const user = await client.users.getUser(userId);
+      const adminEmail = user.emailAddresses[0]?.emailAddress?.toLowerCase() || "admin@sparkbooks.com";
+      const adminName = `${user.firstName || "Admin"} ${user.lastName || "SparkBooks"}`.trim();
+      const adminPhone = user.phoneNumbers[0]?.phoneNumber || "+2348000000000";
+
+      const { data: existingAdmin } = await supabase
+        .from("partners")
+        .select("*")
+        .ilike("email", adminEmail)
+        .maybeSingle();
+
+      if (existingAdmin) {
+        await supabase
+          .from("partners")
+          .update({
+            clerk_user_id: userId,
+            status: "active",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingAdmin.id);
+
+        partnerRow = { ...existingAdmin, clerk_user_id: userId, status: "active" };
+      } else {
+        const codeSuffix = userId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase() || "ADM1";
+        const { data: createdAdmin, error: createAdminErr } = await supabase
+          .from("partners")
+          .insert({
+            clerk_user_id: userId,
+            full_name: adminName,
+            email: adminEmail,
+            phone_number: adminPhone,
+            partner_code: `ADM${codeSuffix}`,
+            commission_rate: 30.0,
+            role: "coordinator",
+            region: "National Lead",
+            status: "active",
+          })
+          .select("*")
+          .single();
+
+        if (!createAdminErr && createdAdmin) {
+          partnerRow = createdAdmin;
+        }
+      }
+    } catch (err) {
+      console.error("[requirePartner] Auto-provision admin partner error:", err);
+    }
   }
 
   if (!partnerRow) {
