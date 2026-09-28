@@ -25,6 +25,13 @@ export default async function DashboardLayout({
     }
   }
 
+  const isSyntheticEmail = email?.endsWith("@sparkbooks.io");
+  const displayContact = !isSyntheticEmail && email
+    ? email
+    : tenant.whatsappNumber
+      ? (tenant.whatsappNumber.startsWith("+") ? tenant.whatsappNumber : `+${tenant.whatsappNumber}`)
+      : null;
+
   const links = [
     { href: "/dashboard", label: "Overview" },
     { href: "/dashboard/products", label: "Products" },
@@ -55,10 +62,10 @@ export default async function DashboardLayout({
               }`}>
                 {isOwner ? "Owner" : "Staff"}
               </span>
-              {email && (
+              {displayContact && (
                 <>
                   <span className="text-rule shrink-0 hidden sm:inline">|</span>
-                  <span className="truncate hidden sm:inline">{email}</span>
+                  <span className="truncate hidden sm:inline">{displayContact}</span>
                 </>
               )}
             </div>
