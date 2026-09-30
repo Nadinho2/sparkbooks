@@ -46,7 +46,7 @@ const PLANS: Record<PlanTier, PlanLimits> = {
     maxProducts: -1,
     csvBulkUpload: true,
     whatsappLowStockAlerts: true,
-    amountNaira: 3500,
+    amountNaira: 4999,
     paystackPlanCode: process.env.PAYSTACK_STARTER_PLAN_CODE ?? null,
   },
   pro: {
@@ -56,7 +56,7 @@ const PLANS: Record<PlanTier, PlanLimits> = {
     maxProducts: -1,
     csvBulkUpload: true,
     whatsappLowStockAlerts: true,
-    amountNaira: 5000,
+    amountNaira: 9999,
     paystackPlanCode: process.env.PAYSTACK_PRO_PLAN_CODE ?? null,
   },
 };
@@ -92,7 +92,7 @@ export function planLimitExceededMessage(tier: PlanTier): string {
   if (limits.tier === "free") {
     return (
       `You've reached your free limit of ${limits.monthlyMessageLimit} entries this month. ` +
-      `Upgrade to Starter (₦3,500/month) for 200 entries or Pro (₦5,000/month) for unlimited. ` +
+      `Upgrade to Starter (₦4,999/month) for 200 entries or Pro (₦9,999/month) for unlimited. ` +
       `Visit: ${appUrl}/dashboard/billing`
     );
   }

@@ -5,6 +5,7 @@ import { formatNaira } from "@/lib/format";
 import type { ProductRow } from "./ProductTable";
 import {
   getProductAnalytics,
+  renameProduct,
   type ProductAnalytics,
 } from "@/app/dashboard/products/actions";
 
@@ -26,6 +27,36 @@ export function ProductDetailModal({
   const [loading, setLoading] = useState(true);
   const [analytics, setAnalytics] = useState<ProductAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [nameInput, setNameInput] = useState(product.name);
+  const [displayedName, setDisplayedName] = useState(product.name);
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  async function handleRename() {
+    const trimmed = nameInput.trim();
+    if (!trimmed || trimmed === displayedName) {
+      setIsRenaming(false);
+      return;
+    }
+    setRenameLoading(true);
+    setRenameError(null);
+    try {
+      const res = await renameProduct(product.id, trimmed);
+      if (res.success) {
+        setDisplayedName(trimmed);
+        product.name = trimmed;
+        setIsRenaming(false);
+      } else {
+        setRenameError(res.error || "Failed to update product name");
+      }
+    } catch (err: any) {
+      setRenameError(err?.message || "Failed to update product name");
+    } finally {
+      setRenameLoading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -107,9 +138,66 @@ export function ProductDetailModal({
         <div className="p-5 sm:p-6 border-b border-rule bg-gradient-to-b from-slate-50/80 to-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-display text-xl sm:text-2xl text-ink font-bold tracking-tight">
-                {product.name}
-              </h2>
+              {isRenaming ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRename();
+                      if (e.key === "Escape") setIsRenaming(false);
+                    }}
+                    disabled={renameLoading}
+                    className="font-display text-lg sm:text-xl text-ink font-bold px-2.5 py-1 rounded-xl border border-emerald-500 bg-white shadow-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                    placeholder="Product name"
+                  />
+                  <button
+                    onClick={handleRename}
+                    disabled={renameLoading}
+                    className="px-3 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs"
+                  >
+                    {renameLoading ? "Saving..." : "Save"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setNameInput(displayedName);
+                      setIsRenaming(false);
+                      setRenameError(null);
+                    }}
+                    disabled={renameLoading}
+                    className="px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {renameError && (
+                    <span className="text-xs text-rose-600 font-medium block w-full">
+                      {renameError}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 group/title">
+                  <h2 className="font-display text-xl sm:text-2xl text-ink font-bold tracking-tight">
+                    {displayedName}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNameInput(displayedName);
+                      setIsRenaming(true);
+                    }}
+                    className="p-1 rounded-md text-ink-muted hover:text-ink hover:bg-slate-100 transition-colors text-xs inline-flex items-center gap-1 border border-transparent hover:border-slate-200"
+                    title="Edit product name"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                    <span className="text-[11px] font-medium hidden sm:inline">Rename</span>
+                  </button>
+                </div>
+              )}
               {product.categoryName && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-sand/70 border border-rule/80 text-ink-muted">
                   {product.categoryName}

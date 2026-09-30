@@ -137,6 +137,35 @@ export async function updateProduct(
   revalidatePath("/dashboard/products");
 }
 
+export async function renameProduct(
+  productId: number,
+  newName: string,
+): Promise<{ success: boolean; error?: string }> {
+  const { userId } = await auth();
+  if (!userId) return { success: false, error: "Unauthorized" };
+
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    return { success: false, error: "Product name cannot be empty." };
+  }
+
+  const tenantId = await getCurrentTenantId();
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("products")
+    .update({ name: trimmed })
+    .eq("id", productId)
+    .eq("tenant_id", tenantId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  revalidatePath("/dashboard/products");
+  return { success: true };
+}
+
 export async function softDeleteProduct(
   _clientTenantId: number,
   productId: number,

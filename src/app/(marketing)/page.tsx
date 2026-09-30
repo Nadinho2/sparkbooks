@@ -171,7 +171,7 @@ export default function Home() {
               },
               {
                 name: "Starter",
-                price: "N3,500",
+                price: "₦4,999",
                 period: "/ month",
                 desc: "For growing shops with steady sales.",
                 features: [
@@ -186,7 +186,7 @@ export default function Home() {
               },
               {
                 name: "Pro",
-                price: "N5,000",
+                price: "₦9,999",
                 period: "/ month",
                 desc: "For busy shops with high volume.",
                 features: [

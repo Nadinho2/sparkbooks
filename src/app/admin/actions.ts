@@ -412,7 +412,7 @@ export async function fetchUsageSummary(): Promise<CostSummary> {
     (textCount ?? 0) * DEEPSEEK_COST_PER_CALL) * USD_TO_NGN;
 
   // Revenue: exclusive of comped tenants
-  // starter=₦3500, pro=₦5000 per active tenant
+  // starter=₦4999, pro=₦9999 per active tenant
   const { data: payingTenants } = await supabase
     .from("tenants")
     .select("plan_tier")
@@ -423,7 +423,7 @@ export async function fetchUsageSummary(): Promise<CostSummary> {
   let revenue = 0;
   if (payingTenants) {
     for (const pt of payingTenants) {
-      revenue += pt.plan_tier === "pro" ? 5000 : 3500;
+      revenue += pt.plan_tier === "pro" ? 9999 : 4999;
     }
   }
 

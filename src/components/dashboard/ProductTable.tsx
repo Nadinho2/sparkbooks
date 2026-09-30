@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { formatNaira } from "@/lib/format";
 import { EditProductModal } from "./EditProductModal";
 import { ProductDetailModal } from "./ProductDetailModal";
 import { CategoryManager } from "./CategoryManager";
-import { softDeleteProduct } from "@/app/dashboard/products/actions";
+import { softDeleteProduct, renameProduct } from "@/app/dashboard/products/actions";
 
 export interface ProductRow {
   id: number;
@@ -41,6 +41,12 @@ export function ProductTable({
   tenantId,
   isOwner = true,
 }: ProductTableProps) {
+  const [items, setItems] = useState<ProductRow[]>(products);
+
+  useEffect(() => {
+    setItems(products);
+  }, [products]);
+
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<ProductRow | null>(null);
   const [adding, setAdding] = useState(false);
@@ -49,24 +55,56 @@ export function ProductTable({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
 
+  const [inlineRenameId, setInlineRenameId] = useState<number | null>(null);
+  const [inlineRenameName, setInlineRenameName] = useState<string>("");
+  const [inlineRenaming, setInlineRenaming] = useState<boolean>(false);
+  const [inlineRenameError, setInlineRenameError] = useState<string | null>(null);
+
+  const handleSaveInlineRename = async (productId: number) => {
+    const trimmed = inlineRenameName.trim();
+    if (!trimmed) {
+      setInlineRenameError("Product name cannot be empty");
+      return;
+    }
+    setInlineRenaming(true);
+    setInlineRenameError(null);
+    try {
+      const res = await renameProduct(productId, trimmed);
+      if (res.success) {
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === productId ? { ...item, name: trimmed } : item
+          )
+        );
+        setInlineRenameId(null);
+      } else {
+        setInlineRenameError(res.error || "Failed to update name");
+      }
+    } catch (err: any) {
+      setInlineRenameError(err?.message || "Failed to update name");
+    } finally {
+      setInlineRenaming(false);
+    }
+  };
+
   const totalCatalogValue = useMemo(() => {
-    return products.reduce((acc, p) => acc + (p.totalValue || 0), 0);
-  }, [products]);
+    return items.reduce((acc, p) => acc + (p.totalValue || 0), 0);
+  }, [items]);
 
   const totalUnitsSold = useMemo(() => {
-    return products.reduce((acc, p) => acc + (p.totalSold || 0), 0);
-  }, [products]);
+    return items.reduce((acc, p) => acc + (p.totalSold || 0), 0);
+  }, [items]);
 
   const totalSalesRevenue = useMemo(() => {
-    return products.reduce((acc, p) => acc + (p.totalRevenue || 0), 0);
-  }, [products]);
+    return items.reduce((acc, p) => acc + (p.totalRevenue || 0), 0);
+  }, [items]);
 
   const lowStockCount = useMemo(() => {
-    return products.filter((p) => p.isLowStock).length;
-  }, [products]);
+    return items.filter((p) => p.isLowStock).length;
+  }, [items]);
 
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
+    return items.filter((p) => {
       if (selectedCategory !== "all" && p.categoryId !== selectedCategory) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -77,7 +115,7 @@ export function ProductTable({
       }
       return true;
     });
-  }, [products, selectedCategory, searchQuery]);
+  }, [items, selectedCategory, searchQuery]);
 
   const handleDelete = useCallback(async () => {
     if (!deleting) return;
@@ -332,21 +370,81 @@ export function ProductTable({
               {filteredProducts.map((p) => (
                 <tr
                   key={p.id}
-                  onClick={() => setSelectedDetail(p)}
+                  onClick={() => {
+                    if (inlineRenameId !== p.id) setSelectedDetail(p);
+                  }}
                   className={`hover:bg-slate-50/80 transition-colors cursor-pointer group ${
                     p.isLowStock ? "bg-amber-50/30" : ""
                   }`}
                   title="Click to view sales and price analytics"
                 >
-                  <td className="py-3.5 px-4">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-ink font-semibold group-hover:text-ink transition-colors">
-                        {p.name}
-                      </span>
-                      <span className="text-[11px] text-ink-muted/70 group-hover:text-ink transition-colors">
-                        ↗
-                      </span>
-                    </div>
+                  <td className="py-3.5 px-4" onClick={(e) => {
+                    if (inlineRenameId === p.id) e.stopPropagation();
+                  }}>
+                    {inlineRenameId === p.id ? (
+                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          autoFocus
+                          value={inlineRenameName}
+                          onChange={(e) => setInlineRenameName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveInlineRename(p.id);
+                            if (e.key === "Escape") setInlineRenameId(null);
+                          }}
+                          disabled={inlineRenaming}
+                          className="px-2 py-1 text-xs font-semibold text-ink border border-emerald-500 rounded-lg outline-none bg-white shadow-xs focus:ring-2 focus:ring-emerald-500/20"
+                          placeholder="Product name"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveInlineRename(p.id)}
+                          disabled={inlineRenaming}
+                          className="px-2 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors shadow-xs"
+                          title="Save name"
+                        >
+                          {inlineRenaming ? "..." : "✓"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setInlineRenameId(null)}
+                          disabled={inlineRenaming}
+                          className="px-1.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 rounded-md transition-colors"
+                          title="Cancel"
+                        >
+                          ✕
+                        </button>
+                        {inlineRenameError && (
+                          <span className="text-[10px] text-rose-600 font-medium">
+                            {inlineRenameError}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 group/name">
+                        <span className="text-ink font-semibold group-hover:text-ink transition-colors">
+                          {p.name}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setInlineRenameId(p.id);
+                            setInlineRenameName(p.name);
+                            setInlineRenameError(null);
+                          }}
+                          className="p-1 rounded text-ink-muted hover:text-ink hover:bg-sand transition-colors opacity-70 group-hover/name:opacity-100"
+                          title="Quick rename product"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
+                        <span className="text-[11px] text-ink-muted/70 group-hover:text-ink transition-colors">
+                          ↗
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="py-3.5 px-4">
                     {p.categoryName ? (
@@ -446,17 +544,73 @@ export function ProductTable({
         {filteredProducts.map((p) => (
           <div
             key={p.id}
-            onClick={() => setSelectedDetail(p)}
+            onClick={() => {
+              if (inlineRenameId !== p.id) setSelectedDetail(p);
+            }}
             className={`bg-white rounded-xl border p-4 cursor-pointer hover:border-ink-muted transition-colors ${
               p.isLowStock ? "border-flag bg-flag-light/30" : "border-rule"
             }`}
           >
             <div className="flex items-start justify-between mb-2">
               <div>
-                <div className="flex items-center gap-1.5">
-                  <h3 className="text-ink font-medium">{p.name}</h3>
-                  <span className="text-xs text-ink-muted">↗</span>
-                </div>
+                {inlineRenameId === p.id ? (
+                  <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      autoFocus
+                      value={inlineRenameName}
+                      onChange={(e) => setInlineRenameName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveInlineRename(p.id);
+                        if (e.key === "Escape") setInlineRenameId(null);
+                      }}
+                      disabled={inlineRenaming}
+                      className="px-2 py-1 text-xs font-semibold text-ink border border-emerald-500 rounded-lg outline-none bg-white shadow-xs"
+                      placeholder="Product name"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveInlineRename(p.id)}
+                      disabled={inlineRenaming}
+                      className="px-2 py-1 text-xs font-semibold text-white bg-emerald-600 rounded-md"
+                    >
+                      {inlineRenaming ? "..." : "✓"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInlineRenameId(null)}
+                      disabled={inlineRenaming}
+                      className="px-1.5 py-1 text-xs text-slate-500"
+                    >
+                      ✕
+                    </button>
+                    {inlineRenameError && (
+                      <span className="text-[10px] text-rose-600 font-medium block w-full">
+                        {inlineRenameError}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-ink font-medium">{p.name}</h3>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInlineRenameId(p.id);
+                        setInlineRenameName(p.name);
+                        setInlineRenameError(null);
+                      }}
+                      className="p-1 rounded text-ink-muted hover:text-ink"
+                      title="Rename product"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                    <span className="text-xs text-ink-muted">↗</span>
+                  </div>
+                )}
                 {p.categoryName && (
                   <span className="text-xs text-ink-muted">{p.categoryName}</span>
                 )}

@@ -85,6 +85,17 @@ function wrapper(content: string, options?: { previewText?: string }): string {
 </html>`;
 }
 
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&bull;/g, "•")
+    .replace(/&copy;/g, "©")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function sendMail(
   toEmail: string,
   subject: string,
@@ -99,11 +110,16 @@ async function sendMail(
 
   try {
     const resend = new Resend(apiKey);
+    const html = wrapper(content, { previewText });
+    const text = htmlToPlainText(content);
+
     const res = await resend.emails.send({
       from: getFromEmail(),
       to: toEmail,
+      replyTo: "SparkBooks Support <support@sparkbooks.com.ng>",
       subject,
-      html: wrapper(content, { previewText }),
+      html,
+      text,
     });
 
     if (res.error) {
@@ -111,6 +127,7 @@ async function sendMail(
       return { success: false, error: res.error.message };
     }
 
+    console.log(`[Resend] Successfully delivered message id: ${res.data?.id} to ${toEmail}`);
     return { success: true };
   } catch (err: any) {
     console.warn("[Resend] Delivery exception:", err?.message || err);
@@ -193,7 +210,7 @@ export async function sendStoreWelcomeEmail(
 
   return sendMail(
     toEmail,
-    `🎉 Welcome to SparkBooks! Start recording sales on WhatsApp`,
+    `Welcome to SparkBooks - Start recording sales on WhatsApp`,
     content,
     `Your store ${businessName} is active on SparkBooks. Start logging sales directly on WhatsApp.`
   );
@@ -278,7 +295,7 @@ export async function sendMerchantWelcomeEmail(
 
   return sendMail(
     toEmail,
-    `🎉 Welcome to SparkBooks! Your store has been activated by ${brmName}`,
+    `Welcome to SparkBooks - ${businessName} is activated`,
     content,
     `Your store ${businessName} has been activated on SparkBooks. Open the WhatsApp bot or your 1-click dashboard.`
   );
