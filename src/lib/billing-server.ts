@@ -53,6 +53,37 @@ export async function createPaystackCustomer(
   return { customerCode: body.data.customer_code };
 }
 
+export async function initializePaystackSubscription(
+  email: string,
+  planCode: string,
+  amountNaira: number,
+  callbackUrl?: string,
+  metadata?: Record<string, unknown>,
+): Promise<{ authorizationUrl: string; accessCode: string; reference: string }> {
+  const payload: Record<string, unknown> = {
+    email,
+    amount: Math.round(amountNaira * 100), // In kobo
+    plan: planCode,
+  };
+  if (callbackUrl) payload.callback_url = callbackUrl;
+  if (metadata) payload.metadata = metadata;
+
+  const res = await fetch(`${PAYSTACK_BASE}/transaction/initialize`, {
+    method: "POST",
+    headers: paystackHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!body.status) {
+    throw new Error(body.message ?? "Failed to initialize Paystack payment");
+  }
+  return {
+    authorizationUrl: body.data.authorization_url,
+    accessCode: body.data.access_code,
+    reference: body.data.reference,
+  };
+}
+
 export async function createPaystackSubscription(
   customerCode: string,
   planCode: string,

@@ -10,6 +10,7 @@ import { getCurrentTenantId, isTenantOwner } from "@/lib/tenant-server";
 import {
   createPaystackCustomer,
   createPaystackSubscription,
+  initializePaystackSubscription,
   enablePaystackSubscription,
   cancelPaystackSubscription,
   fetchPaystackSubscription,
@@ -134,36 +135,28 @@ export async function startSubscription(
     }
   }
 
-  // Create subscription
+  // Initialize subscription checkout with Paystack
   try {
-    const sub = await createPaystackSubscription(
-      customerCode,
+    const siteUrl =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      "https://sparkbooks.com.ng";
+    const callbackUrl = `${siteUrl}/dashboard/billing?status=success`;
+
+    const payment = await initializePaystackSubscription(
+      email,
       limits.paystackPlanCode,
+      limits.amountNaira,
+      callbackUrl,
+      {
+        tenant_id: tenantId,
+        plan_tier: tier,
+        customer_code: customerCode,
+      },
     );
 
-    // Enable the subscription so it starts charging
-    if (sub.emailToken) {
-      try {
-        await enablePaystackSubscription(sub.subscriptionCode, sub.emailToken);
-      } catch {
-        // Enabling may not be required depending on plan config; non-critical
-      }
-    }
-
-    await supabase
-      .from("tenants")
-      .update({
-        paystack_subscription_id: sub.subscriptionCode,
-        plan_tier: tier,
-        plan_status: "active",
-        monthly_message_limit: limits.monthlyMessageLimit,
-      })
-      .eq("id", tenantId);
-
-    revalidatePath("/dashboard/billing");
-
     return {
-      authorizationUrl: sub.authorizationUrl,
+      authorizationUrl: payment.authorizationUrl,
     };
   } catch (err) {
     return { error: (err as Error).message };

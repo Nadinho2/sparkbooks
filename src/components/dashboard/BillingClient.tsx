@@ -61,8 +61,8 @@ export function BillingClient({
           type: "success",
           text: `Redirecting to Paystack to complete your ${getPlanLimits(tier).label} subscription…`,
         });
-        // Open Paystack payment page
-        window.open(result.authorizationUrl, "_blank");
+        // Redirect to Paystack payment page
+        window.location.href = result.authorizationUrl;
       }
     });
   }

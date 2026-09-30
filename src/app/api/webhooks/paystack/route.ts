@@ -53,24 +53,36 @@ export async function POST(request: NextRequest) {
     switch (eventType) {
       case "charge.success": {
         // Subscription charge succeeded — tenant is in good standing
-        const subscriptionCode = data.subscription?.subscription_code;
+        const subscriptionCode = data.subscription?.subscription_code || data.subscription_code;
         const customerCode = data.customer?.customer_code;
         const nextPaymentDate = data.subscription?.next_payment_date;
 
-        if (!subscriptionCode && !customerCode) break;
-
-        // Find tenant by subscription or customer code
-        const query = subscriptionCode
-          ? supabase
-              .from("tenants")
-              .select("id, paystack_subscription_id, whatsapp_number, plan_tier, business_name, merchant_email")
-              .eq("paystack_subscription_id", subscriptionCode)
-          : supabase
-              .from("tenants")
-              .select("id, paystack_customer_id, whatsapp_number, plan_tier, business_name, merchant_email")
-              .eq("paystack_customer_id", customerCode);
-
-        const { data: tenantData } = await query.single();
+        // Find tenant by metadata, subscription code, or customer code
+        let tenantData = null;
+        if (data.metadata?.tenant_id) {
+          const { data: t } = await supabase
+            .from("tenants")
+            .select("id, paystack_subscription_id, whatsapp_number, plan_tier, business_name, merchant_email")
+            .eq("id", data.metadata.tenant_id)
+            .single();
+          tenantData = t;
+        }
+        if (!tenantData && subscriptionCode) {
+          const { data: t } = await supabase
+            .from("tenants")
+            .select("id, paystack_subscription_id, whatsapp_number, plan_tier, business_name, merchant_email")
+            .eq("paystack_subscription_id", subscriptionCode)
+            .single();
+          tenantData = t;
+        }
+        if (!tenantData && customerCode) {
+          const { data: t } = await supabase
+            .from("tenants")
+            .select("id, paystack_subscription_id, whatsapp_number, plan_tier, business_name, merchant_email")
+            .eq("paystack_customer_id", customerCode)
+            .single();
+          tenantData = t;
+        }
 
         if (tenantData) {
           const update: Record<string, unknown> = {
@@ -78,6 +90,12 @@ export async function POST(request: NextRequest) {
           };
           if (nextPaymentDate) {
             update.current_period_end = nextPaymentDate;
+          }
+          if (subscriptionCode) {
+            update.paystack_subscription_id = subscriptionCode;
+          }
+          if (customerCode) {
+            update.paystack_customer_id = customerCode;
           }
 
           // Sync plan tier from Paystack plan code if present
