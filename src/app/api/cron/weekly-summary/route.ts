@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
   // Fetch all active, non-suspended tenants with WhatsApp numbers
   const { data: tenants, error: tenantsError } = await supabase
     .from("tenants")
-    .select("id, business_name, whatsapp_number")
+    .select("id, business_name, whatsapp_number, merchant_email")
     .eq("is_suspended", false)
     .not("whatsapp_number", "is", null);
 
@@ -103,6 +103,25 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       console.error(`Failed to send weekly summary to tenant ${tenant.id}:`, err);
       failedCount++;
+    }
+
+    // Also dispatch branded HTML weekly digest via Resend if merchant email is on file
+    if (tenant.merchant_email) {
+      try {
+        const { sendWeeklyDigestEmail } = await import("@/lib/email");
+        await sendWeeklyDigestEmail(
+          tenant.merchant_email,
+          tenant.business_name,
+          {
+            totalSales: totalSales.toLocaleString("en-NG"),
+            totalExpenses: totalExpenses.toLocaleString("en-NG"),
+            netProfit: netProfit.toLocaleString("en-NG"),
+            totalEntriesCount: count,
+          }
+        );
+      } catch (emailErr) {
+        console.warn(`Failed to dispatch weekly email to ${tenant.merchant_email}:`, emailErr);
+      }
     }
   }
 

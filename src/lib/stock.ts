@@ -199,4 +199,26 @@ async function checkAndSendLowStockAlert(
     .from("products")
     .update({ last_low_stock_alert_at: now.toISOString() })
     .eq("id", check.productId);
+
+  // Dispatch low stock email alert via Resend if merchant email is configured
+  try {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("business_name, merchant_email")
+      .eq("id", check.tenantId)
+      .single();
+
+    if (tenant?.merchant_email) {
+      const { sendLowStockEmail } = await import("@/lib/email");
+      await sendLowStockEmail(
+        tenant.merchant_email,
+        tenant.business_name || "SparkBooks Store",
+        check.productName,
+        check.newQty,
+        check.unit
+      );
+    }
+  } catch (emailErr) {
+    console.warn("Could not dispatch low stock email alert:", emailErr);
+  }
 }

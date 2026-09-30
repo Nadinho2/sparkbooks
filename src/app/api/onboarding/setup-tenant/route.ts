@@ -142,11 +142,27 @@ export async function POST(request: Request) {
     );
   }
 
-  // Store tenant_id in Clerk metadata
+  // Store tenant_id in Clerk metadata & dispatch welcome email
   const client = await clerkClient();
   await client.users.updateUser(userId, {
     publicMetadata: { tenant_id: tenant.id },
   });
+
+  try {
+    const clerkUser = await client.users.getUser(userId);
+    const userEmail = clerkUser.emailAddresses[0]?.emailAddress?.toLowerCase();
+    if (userEmail) {
+      await supabase
+        .from("tenants")
+        .update({ merchant_email: userEmail })
+        .eq("id", tenant.id);
+
+      const { sendStoreWelcomeEmail } = await import("@/lib/email");
+      await sendStoreWelcomeEmail(userEmail, tenant.business_name, tenant.whatsapp_number);
+    }
+  } catch (emailErr) {
+    console.warn("[setup-tenant] Could not dispatch welcome email:", emailErr);
+  }
 
   // Seed categories
   const categoryNames = BUSINESS_CATEGORIES[body.businessType];

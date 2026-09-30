@@ -162,6 +162,35 @@ export async function incrementMessageCount(tenantId: number): Promise<void> {
       );
     }
   }
+
+  // Check if tenant reached 80% or 100% quota threshold and dispatch email notification
+  try {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("business_name, merchant_email, monthly_message_count, monthly_message_limit")
+      .eq("id", tenantId)
+      .single();
+
+    if (tenant?.merchant_email && tenant.monthly_message_limit && tenant.monthly_message_limit > 0) {
+      const count = Number(tenant.monthly_message_count);
+      const limit = Number(tenant.monthly_message_limit);
+      const threshold80 = Math.floor(limit * 0.8);
+
+      if (count === threshold80 || count === limit) {
+        const usagePercent = Math.round((count / limit) * 100);
+        const { sendQuotaWarningEmail } = await import("@/lib/email");
+        await sendQuotaWarningEmail(
+          tenant.merchant_email,
+          tenant.business_name || "SparkBooks Merchant",
+          count,
+          limit,
+          usagePercent
+        );
+      }
+    }
+  } catch (quotaErr) {
+    console.warn("Could not check/dispatch quota warning email:", quotaErr);
+  }
 }
 
 /* ───────────────────────────────────────────

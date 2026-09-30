@@ -1216,13 +1216,28 @@ export async function updatePartnerStatusAction(
   await requireAdmin();
   const supabase = createAdminClient();
 
-  const { error } = await supabase
+  const { data: partner, error } = await supabase
     .from("partners")
     .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", partnerId);
+    .eq("id", partnerId)
+    .select("full_name, email, partner_code")
+    .single();
 
   if (error) {
     return { success: false, error: "Failed to update partner status." };
+  }
+
+  if (status === "active" && partner?.email) {
+    try {
+      const { sendPartnerApprovedEmail } = await import("@/lib/email");
+      await sendPartnerApprovedEmail(
+        partner.email,
+        partner.full_name,
+        partner.partner_code
+      );
+    } catch (emailErr) {
+      console.warn("Could not dispatch partner approval email:", emailErr);
+    }
   }
 
   revalidatePath("/admin/partners");

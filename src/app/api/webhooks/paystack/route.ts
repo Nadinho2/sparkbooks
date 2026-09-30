@@ -63,11 +63,11 @@ export async function POST(request: NextRequest) {
         const query = subscriptionCode
           ? supabase
               .from("tenants")
-              .select("id, paystack_subscription_id, whatsapp_number, plan_tier")
+              .select("id, paystack_subscription_id, whatsapp_number, plan_tier, business_name, merchant_email")
               .eq("paystack_subscription_id", subscriptionCode)
           : supabase
               .from("tenants")
-              .select("id, paystack_customer_id, whatsapp_number, plan_tier")
+              .select("id, paystack_customer_id, whatsapp_number, plan_tier, business_name, merchant_email")
               .eq("paystack_customer_id", customerCode);
 
         const { data: tenantData } = await query.single();
@@ -121,6 +121,43 @@ export async function POST(request: NextRequest) {
               );
             } catch (err) {
               console.warn("Could not send WhatsApp subscription confirmation:", err);
+            }
+          }
+
+          // Dispatch email receipt via Resend
+          const customerEmail = data.customer?.email || (tenantData as any).merchant_email;
+          if (customerEmail) {
+            const rawTier = (update.plan_tier as string) || tenantData.plan_tier || "Starter";
+            const tierLabel = rawTier.charAt(0).toUpperCase() + rawTier.slice(1);
+            const amountFormatted = data.amount
+              ? (Number(data.amount) / 100).toLocaleString("en-NG")
+              : (rawTier.toLowerCase() === "pro" ? "9,900" : "4,900");
+            const paymentDate = new Date().toLocaleDateString("en-NG", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            });
+            const nextRenewalFormatted = nextPaymentDate
+              ? new Date(nextPaymentDate).toLocaleDateString("en-NG", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              : "Next billing cycle";
+
+            try {
+              const { sendBillingReceiptEmail } = await import("@/lib/email");
+              await sendBillingReceiptEmail(
+                customerEmail,
+                (tenantData as any).business_name || "SparkBooks Merchant",
+                tierLabel,
+                amountFormatted,
+                paymentDate,
+                nextRenewalFormatted,
+                data.reference || subscriptionCode || "N/A"
+              );
+            } catch (emailErr) {
+              console.warn("Could not dispatch Paystack billing receipt email:", emailErr);
             }
           }
         }
@@ -196,7 +233,7 @@ export async function POST(request: NextRequest) {
 
         const { data: tenantData } = await supabase
           .from("tenants")
-          .select("id, whatsapp_number")
+          .select("id, whatsapp_number, business_name, merchant_email")
           .eq("paystack_subscription_id", subscriptionCode)
           .single();
 
@@ -205,6 +242,26 @@ export async function POST(request: NextRequest) {
             .from("tenants")
             .update({ plan_status: "past_due" })
             .eq("id", tenantData.id);
+
+          // Dispatch email notification via Resend
+          const customerEmail = data.customer?.email || (tenantData as any).merchant_email;
+          if (customerEmail) {
+            const rawTier = data.subscription?.plan?.name || "Subscription";
+            const amountFormatted = data.amount
+              ? (Number(data.amount) / 100).toLocaleString("en-NG")
+              : "Subscription Fee";
+            try {
+              const { sendPaymentFailedEmail } = await import("@/lib/email");
+              await sendPaymentFailedEmail(
+                customerEmail,
+                (tenantData as any).business_name || "Merchant",
+                rawTier,
+                amountFormatted
+              );
+            } catch (emailErr) {
+              console.warn("Could not dispatch payment failed email:", emailErr);
+            }
+          }
 
           // Notify the tenant via WhatsApp
           if (tenantData.whatsapp_number) {

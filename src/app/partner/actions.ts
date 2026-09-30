@@ -190,7 +190,8 @@ export async function onboardShopAction(input: OnboardShopInput): Promise<{
         merchantEmail,
         newTenant.business_name,
         partner.fullName,
-        botUrl
+        botUrl,
+        magicLoginUrl
       );
     } catch (emailErr) {
       console.warn("Could not send merchant welcome email:", emailErr);
