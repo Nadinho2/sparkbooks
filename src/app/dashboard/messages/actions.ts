@@ -229,7 +229,7 @@ export async function fetchMessages(
           senderMemberId: m.sender_member_id,
           senderName: "SparkBooks AI Bot",
           senderUsername: "@sparkbooks",
-          senderEmail: "ai@sparkbooks.com",
+          senderEmail: "ai@sparkbooks.com.ng",
           senderRole: "bot",
           createdAt: m.created_at,
         };

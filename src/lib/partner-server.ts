@@ -199,7 +199,7 @@ export async function requirePartner(): Promise<Partner> {
       const { clerkClient } = await import("@clerk/nextjs/server");
       const client = await clerkClient();
       const user = await client.users.getUser(userId);
-      const adminEmail = user.emailAddresses[0]?.emailAddress?.toLowerCase() || "admin@sparkbooks.com";
+      const adminEmail = user.emailAddresses[0]?.emailAddress?.toLowerCase() || "admin@sparkbooks.com.ng";
       const adminName = `${user.firstName || "Admin"} ${user.lastName || "SparkBooks"}`.trim();
       const adminPhone = user.phoneNumbers[0]?.phoneNumber || "+2348000000000";
 
@@ -254,7 +254,7 @@ export async function requirePartner(): Promise<Partner> {
         clerkUserId: userId,
         fullName: "Admin Partner",
         phoneNumber: "+2348000000000",
-        email: "admin@sparkbooks.com",
+        email: "admin@sparkbooks.com.ng",
         partnerCode: "DEMO26",
         commissionRate: 30.0,
         role: "coordinator",

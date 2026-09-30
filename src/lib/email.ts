@@ -104,7 +104,7 @@ export async function sendTeamInviteEmail(
       </tr>
     </table>`;
 
-  const fromEmail = process.env.RESEND_FROM_EMAIL || "SparkBooks <onboarding@resend.dev>";
+  const fromEmail = process.env.RESEND_FROM_EMAIL || "SparkBooks <noreply@sparkbooks.com.ng>";
 
   try {
     const resend = new Resend(apiKey);
@@ -203,7 +203,7 @@ export async function sendMerchantWelcomeEmail(
       </tr>
     </table>`;
 
-  const fromEmail = process.env.RESEND_FROM_EMAIL || "SparkBooks <onboarding@resend.dev>";
+  const fromEmail = process.env.RESEND_FROM_EMAIL || "SparkBooks <noreply@sparkbooks.com.ng>";
 
   try {
     const resend = new Resend(apiKey);
