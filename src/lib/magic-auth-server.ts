@@ -103,6 +103,16 @@ export async function verifyAndConsumeMagicToken(rawToken: string): Promise<{
 
   // 2. Resolve or Create Clerk user
   try {
+    // If tenant already has a clerk_user_id stored, verify that it actually exists in this Clerk instance
+    if (clerkUserId) {
+      try {
+        await client.users.getUser(clerkUserId);
+      } catch {
+        console.warn(`[verifyAndConsumeMagicToken] User ${clerkUserId} not found in active Clerk instance (e.g. dev-to-prod migration). Re-provisioning...`);
+        clerkUserId = null;
+      }
+    }
+
     if (!clerkUserId) {
       const safePhone = (tokenRecord.phone_number || tenant.whatsapp_number || "").replace(/\s+/g, "");
       const candidateEmail = (tenant.merchant_email && (tenant.merchant_email as string).trim())

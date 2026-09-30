@@ -111,93 +111,143 @@ export async function getCurrentTenant(): Promise<Tenant> {
       .maybeSingle();
 
     if (matchedMetaTenant) {
-      if (!matchedMetaTenant.clerk_user_id) {
-        await supabase
-          .from("tenants")
-          .update({ clerk_user_id: userId })
-          .eq("id", matchedMetaTenant.id);
+      if (matchedMetaTenant.clerk_user_id !== userId) {
+        let isClaimable = !matchedMetaTenant.clerk_user_id;
+        if (!isClaimable) {
+          try {
+            await client.users.getUser(matchedMetaTenant.clerk_user_id);
+          } catch {
+            isClaimable = true;
+          }
+        }
+        if (isClaimable) {
+          await supabase
+            .from("tenants")
+            .update({ clerk_user_id: userId })
+            .eq("id", matchedMetaTenant.id);
+        }
       }
       if (matchedMetaTenant.is_suspended) redirect("/suspended");
       return mapTenantRow({ ...matchedMetaTenant, clerk_user_id: userId });
     }
   }
 
-  // 5. Auto-claim store if user signed in with an email matching an unclaimed tenant pre-registered by a BRM
+  // 5. Auto-claim store if user signed in with an email matching an unclaimed or orphaned tenant
   if (email) {
     const cleanEmail = email.trim().toLowerCase();
     const { data: matchedEmailTenant } = await supabase
       .from("tenants")
       .select("*")
       .ilike("merchant_email", cleanEmail)
-      .is("clerk_user_id", null)
       .maybeSingle();
 
     if (matchedEmailTenant) {
-      await supabase
-        .from("tenants")
-        .update({ clerk_user_id: userId })
-        .eq("id", matchedEmailTenant.id);
+      let isClaimable = !matchedEmailTenant.clerk_user_id || matchedEmailTenant.clerk_user_id === userId;
+      if (!isClaimable) {
+        try {
+          await client.users.getUser(matchedEmailTenant.clerk_user_id);
+        } catch {
+          // Stale dev ID not found in active Clerk instance
+          isClaimable = true;
+        }
+      }
 
-      try {
-        await client.users.updateUser(userId, {
-          publicMetadata: { tenant_id: matchedEmailTenant.id },
-        });
-      } catch {}
+      if (isClaimable) {
+        await supabase
+          .from("tenants")
+          .update({ clerk_user_id: userId })
+          .eq("id", matchedEmailTenant.id);
 
-      if (matchedEmailTenant.is_suspended) redirect("/suspended");
-      return mapTenantRow({ ...matchedEmailTenant, clerk_user_id: userId });
+        try {
+          await client.users.updateUser(userId, {
+            publicMetadata: {
+              ...clerkUser.publicMetadata,
+              tenant_id: matchedEmailTenant.id,
+            },
+          });
+        } catch {}
+
+        if (matchedEmailTenant.is_suspended) redirect("/suspended");
+        return mapTenantRow({ ...matchedEmailTenant, clerk_user_id: userId });
+      }
     }
   }
 
-  // 6. Auto-claim store if user signed in with phone matching an unclaimed tenant
+  // 6. Auto-claim store if user signed in with phone matching an unclaimed or orphaned tenant
   if (phoneNumber) {
     const rawDigits = phoneNumber.replace(/\D/g, "");
-    const { data: matchedPhoneTenant } = await supabase
-      .from("tenants")
-      .select("*")
-      .ilike("whatsapp_number", `%${rawDigits.slice(-10)}%`)
-      .is("clerk_user_id", null)
-      .maybeSingle();
-
-    if (matchedPhoneTenant) {
-      await supabase
+    if (rawDigits.length >= 7) {
+      const { data: matchedPhoneTenant } = await supabase
         .from("tenants")
-        .update({ clerk_user_id: userId })
-        .eq("id", matchedPhoneTenant.id);
+        .select("*")
+        .ilike("whatsapp_number", `%${rawDigits.slice(-10)}%`)
+        .maybeSingle();
 
-      try {
-        await client.users.updateUser(userId, {
-          publicMetadata: { tenant_id: matchedPhoneTenant.id },
-        });
-      } catch {}
+      if (matchedPhoneTenant) {
+        let isClaimable = !matchedPhoneTenant.clerk_user_id || matchedPhoneTenant.clerk_user_id === userId;
+        if (!isClaimable) {
+          try {
+            await client.users.getUser(matchedPhoneTenant.clerk_user_id);
+          } catch {
+            isClaimable = true;
+          }
+        }
 
-      if (matchedPhoneTenant.is_suspended) redirect("/suspended");
-      return mapTenantRow({ ...matchedPhoneTenant, clerk_user_id: userId });
+        if (isClaimable) {
+          await supabase
+            .from("tenants")
+            .update({ clerk_user_id: userId })
+            .eq("id", matchedPhoneTenant.id);
+
+          try {
+            await client.users.updateUser(userId, {
+              publicMetadata: {
+                ...clerkUser.publicMetadata,
+                tenant_id: matchedPhoneTenant.id,
+              },
+            });
+          } catch {}
+
+          if (matchedPhoneTenant.is_suspended) redirect("/suspended");
+          return mapTenantRow({ ...matchedPhoneTenant, clerk_user_id: userId });
+        }
+      }
     }
   }
 
+  // 7. Check for pending or orphaned invitations in tenant_members
   if (email) {
-    const { data: pendingInvite } = await supabase
+    const { data: memberInvite } = await supabase
       .from("tenant_members")
-      .select("id, tenant_id, tenants(*)")
-      .eq("invited_email", email)
-      .eq("status", "pending")
+      .select("id, tenant_id, clerk_user_id, status, tenants(*)")
+      .ilike("invited_email", email.trim().toLowerCase())
+      .in("status", ["pending", "active"])
       .maybeSingle();
 
-    if (pendingInvite) {
-      // Activate the membership
-      await supabase
-        .from("tenant_members")
-        .update({
-          clerk_user_id: userId,
-          status: "active",
-        })
-        .eq("id", pendingInvite.id);
+    if (memberInvite) {
+      let isClaimable = !memberInvite.clerk_user_id || memberInvite.clerk_user_id === userId;
+      if (!isClaimable) {
+        try {
+          await client.users.getUser(memberInvite.clerk_user_id);
+        } catch {
+          isClaimable = true;
+        }
+      }
 
-      const tenant = (pendingInvite as unknown as { tenants: Record<string, unknown> | null }).tenants;
-      if (!tenant) redirect("/onboarding");
-      if (tenant.is_suspended) redirect("/suspended");
-      return mapTenantRow(tenant);
+      if (isClaimable) {
+        await supabase
+          .from("tenant_members")
+          .update({
+            clerk_user_id: userId,
+            status: "active",
+          })
+          .eq("id", memberInvite.id);
+
+        const tenant = (memberInvite as unknown as { tenants: Record<string, unknown> | null }).tenants;
+        if (!tenant) redirect("/onboarding");
+        if (tenant.is_suspended) redirect("/suspended");
+        return mapTenantRow(tenant);
+      }
     }
   }
 
