@@ -82,11 +82,13 @@ export async function POST(request: NextRequest) {
 
           // Sync plan tier from Paystack plan code if present
           const planCode = data.plan?.plan_code || data.subscription?.plan?.plan_code;
+          const proPlanCode = process.env.PAYSTACK_PRO_PLAN_CODE || "PLN_k0mhuv22m8dy53y";
+          const starterPlanCode = process.env.PAYSTACK_STARTER_PLAN_CODE || "PLN_keucdm3emskxbka";
           if (planCode) {
-            if (process.env.PAYSTACK_PRO_PLAN_CODE && planCode === process.env.PAYSTACK_PRO_PLAN_CODE) {
+            if (planCode === proPlanCode) {
               update.plan_tier = "pro";
               update.monthly_message_limit = -1;
-            } else if (process.env.PAYSTACK_STARTER_PLAN_CODE && planCode === process.env.PAYSTACK_STARTER_PLAN_CODE) {
+            } else if (planCode === starterPlanCode) {
               update.plan_tier = "starter";
               update.monthly_message_limit = Number(process.env.STARTER_MESSAGE_LIMIT) || 200;
             }

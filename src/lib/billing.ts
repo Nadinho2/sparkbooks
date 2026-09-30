@@ -47,7 +47,7 @@ const PLANS: Record<PlanTier, PlanLimits> = {
     csvBulkUpload: true,
     whatsappLowStockAlerts: true,
     amountNaira: 4999,
-    paystackPlanCode: process.env.PAYSTACK_STARTER_PLAN_CODE ?? null,
+    paystackPlanCode: process.env.PAYSTACK_STARTER_PLAN_CODE || "PLN_keucdm3emskxbka",
   },
   pro: {
     tier: "pro",
@@ -57,7 +57,7 @@ const PLANS: Record<PlanTier, PlanLimits> = {
     csvBulkUpload: true,
     whatsappLowStockAlerts: true,
     amountNaira: 9999,
-    paystackPlanCode: process.env.PAYSTACK_PRO_PLAN_CODE ?? null,
+    paystackPlanCode: process.env.PAYSTACK_PRO_PLAN_CODE || "PLN_k0mhuv22m8dy53y",
   },
 };
 
