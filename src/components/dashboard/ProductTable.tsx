@@ -5,6 +5,7 @@ import { formatNaira } from "@/lib/format";
 import { EditProductModal } from "./EditProductModal";
 import { ProductDetailModal } from "./ProductDetailModal";
 import { CategoryManager } from "./CategoryManager";
+import { BulkUploadModal } from "./BulkUploadModal";
 import { softDeleteProduct, renameProduct } from "@/app/dashboard/products/actions";
 
 export interface ProductRow {
@@ -35,6 +36,7 @@ interface ProductTableProps {
   categories: Category[];
   tenantId: number;
   isOwner?: boolean;
+  canBulkUpload?: boolean;
 }
 
 export function ProductTable({
@@ -42,6 +44,7 @@ export function ProductTable({
   categories,
   tenantId,
   isOwner = true,
+  canBulkUpload = false,
 }: ProductTableProps) {
   const [items, setItems] = useState<ProductRow[]>(products);
 
@@ -54,6 +57,8 @@ export function ProductTable({
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
   const [showCategories, setShowCategories] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [bulkSuccessMsg, setBulkSuccessMsg] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
 
@@ -136,13 +141,21 @@ export function ProductTable({
             Real-time catalog valuation, stock levels, and item-by-item sales breakdown.
           </p>
         </div>
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <button
             onClick={() => setShowCategories(!showCategories)}
             className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-rule bg-white text-xs font-medium text-ink hover:bg-sand-light transition-all shadow-xs"
           >
             <span>🏷️</span>
             <span>{showCategories ? "Close Categories" : "Manage Categories"}</span>
+          </button>
+          <button
+            onClick={() => setShowBulkUpload(true)}
+            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-rule bg-white text-xs font-medium text-ink hover:bg-sand-light transition-all shadow-xs"
+            title="Import products from CSV or Excel"
+          >
+            <span>📥</span>
+            <span>Import CSV / Excel</span>
           </button>
           <button
             onClick={() => setAdding(true)}
@@ -153,6 +166,21 @@ export function ProductTable({
           </button>
         </div>
       </div>
+
+      {bulkSuccessMsg && (
+        <div className="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between shadow-xs animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <span className="text-base font-bold">✓</span>
+            <span className="font-semibold">{bulkSuccessMsg}</span>
+          </div>
+          <button
+            onClick={() => setBulkSuccessMsg(null)}
+            className="text-emerald-700 hover:text-emerald-950 font-bold p-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {showCategories && (
         <div className="mb-6">
@@ -765,6 +793,23 @@ export function ProductTable({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Bulk CSV / Excel Upload Modal */}
+      {showBulkUpload && (
+        <BulkUploadModal
+          tenantId={tenantId}
+          canBulkUpload={canBulkUpload}
+          onClose={() => setShowBulkUpload(false)}
+          onSuccess={(count) => {
+            setBulkSuccessMsg(
+              `Successfully imported ${count} product${count === 1 ? "" : "s"} into your catalog!`
+            );
+            setTimeout(() => {
+              window.location.reload();
+            }, 1200);
+          }}
+        />
       )}
     </>
   );

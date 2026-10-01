@@ -492,3 +492,229 @@ export async function getProductAnalytics(
   };
 }
 
+export interface BulkProductItem {
+  name: string;
+  categoryName?: string | null;
+  quantity?: number;
+  unit?: string;
+  unitCost?: number | null;
+  reorderThreshold?: number | null;
+  piecesPerPack?: number | null;
+  isService?: boolean;
+}
+
+export interface BulkImportResult {
+  success: boolean;
+  imported: number;
+  skippedDuplicates: string[];
+  error?: string;
+}
+
+export async function bulkImportProducts(
+  products: BulkProductItem[],
+  options?: { skipDuplicates?: boolean },
+): Promise<BulkImportResult> {
+  const { userId } = await auth();
+  if (!userId) {
+    return { success: false, imported: 0, skippedDuplicates: [], error: "Unauthorized" };
+  }
+
+  const tenantId = await getCurrentTenantId();
+  const supabase = createAdminClient();
+
+  // Enforce plan check (Starter or Pro)
+  const { data: tenant } = await supabase
+    .from("tenants")
+    .select("plan_tier")
+    .eq("id", tenantId)
+    .single();
+
+  if (!tenant || tenant.plan_tier === "free") {
+    return {
+      success: false,
+      imported: 0,
+      skippedDuplicates: [],
+      error: "CSV Bulk Upload is available on Starter and Pro plans. Please upgrade your plan to use this feature.",
+    };
+  }
+
+  // Enforce product limits if applicable
+  const limit = await checkProductLimit(tenantId);
+  if (!limit.allowed) {
+    return {
+      success: false,
+      imported: 0,
+      skippedDuplicates: [],
+      error: `Product limit reached (${limit.currentCount}/${limit.maxProducts}). Upgrade your plan to add more products.`,
+    };
+  }
+
+  if (!products || products.length === 0) {
+    return { success: false, imported: 0, skippedDuplicates: [], error: "No products provided" };
+  }
+
+  // Fetch existing categories to match or create new ones
+  const { data: existingCategories } = await supabase
+    .from("categories")
+    .select("id, name")
+    .eq("tenant_id", tenantId);
+
+  const categoryMap = new Map<string, number>();
+  (existingCategories ?? []).forEach((c) => {
+    categoryMap.set(c.name.trim().toLowerCase(), c.id);
+  });
+
+  // Collect any category names in products that don't exist yet
+  const newCategoryNames = new Set<string>();
+  products.forEach((p) => {
+    const rawCat = p.categoryName?.trim();
+    if (rawCat && !categoryMap.has(rawCat.toLowerCase())) {
+      newCategoryNames.add(rawCat);
+    }
+  });
+
+  if (newCategoryNames.size > 0) {
+    const newCatsToInsert = Array.from(newCategoryNames).map((name) => ({
+      tenant_id: tenantId,
+      name,
+    }));
+    const { data: createdCats } = await supabase
+      .from("categories")
+      .insert(newCatsToInsert)
+      .select("id, name");
+
+    (createdCats ?? []).forEach((c) => {
+      categoryMap.set(c.name.trim().toLowerCase(), c.id);
+    });
+  }
+
+  // Fetch existing products to check for duplicates
+  const { data: existingProducts } = await supabase
+    .from("products")
+    .select("name")
+    .eq("tenant_id", tenantId)
+    .is("deleted_at", null);
+
+  const existingNameSet = new Set(
+    (existingProducts ?? []).map((p) => p.name.trim().toLowerCase()),
+  );
+
+  const skippedDuplicates: string[] = [];
+  const toInsert: Array<{
+    tenant_id: number;
+    name: string;
+    category_id: number | null;
+    quantity: number;
+    unit: string;
+    unit_cost: number | null;
+    reorder_threshold: number | null;
+    is_service: boolean;
+    pieces_per_pack: number | null;
+  }> = [];
+
+  const seenInBatch = new Set<string>();
+
+  for (const item of products) {
+    const cleanName = item.name?.trim();
+    if (!cleanName) continue;
+
+    const lowerName = cleanName.toLowerCase();
+    if (existingNameSet.has(lowerName) || seenInBatch.has(lowerName)) {
+      skippedDuplicates.push(cleanName);
+      if (options?.skipDuplicates !== false) {
+        continue;
+      }
+    }
+    seenInBatch.add(lowerName);
+
+    const isService = Boolean(item.isService);
+    const qty = isService ? 0 : Math.max(0, Number(item.quantity) || 0);
+    const cost =
+      item.unitCost != null && !isNaN(Number(item.unitCost))
+        ? Math.max(0, Number(item.unitCost))
+        : null;
+    const threshold =
+      !isService && item.reorderThreshold != null && !isNaN(Number(item.reorderThreshold))
+        ? Math.max(0, Number(item.reorderThreshold))
+        : isService
+          ? null
+          : Math.round(qty * 0.2);
+    const piecesPerPack =
+      !isService && item.piecesPerPack != null && !isNaN(Number(item.piecesPerPack))
+        ? Math.max(1, Number(item.piecesPerPack))
+        : null;
+
+    let catId: number | null = null;
+    if (item.categoryName?.trim()) {
+      catId = categoryMap.get(item.categoryName.trim().toLowerCase()) ?? null;
+    }
+
+    toInsert.push({
+      tenant_id: tenantId,
+      name: cleanName,
+      category_id: catId,
+      quantity: qty,
+      unit: item.unit?.trim() || "item",
+      unit_cost: cost,
+      reorder_threshold: threshold,
+      is_service: isService,
+      pieces_per_pack: piecesPerPack,
+    });
+  }
+
+  if (toInsert.length === 0) {
+    return {
+      success: true,
+      imported: 0,
+      skippedDuplicates,
+      error:
+        skippedDuplicates.length > 0
+          ? "All products were skipped because they already exist in your catalog."
+          : "No valid product rows were found in the uploaded file.",
+    };
+  }
+
+  // Insert products
+  const { data: inserted, error: insertError } = await supabase
+    .from("products")
+    .insert(toInsert)
+    .select("id, quantity, is_service");
+
+  if (insertError) {
+    return {
+      success: false,
+      imported: 0,
+      skippedDuplicates,
+      error: insertError.message,
+    };
+  }
+
+  // Create initial stock movements for non-service products with quantity > 0
+  const movements = (inserted ?? [])
+    .filter((p) => !p.is_service && Number(p.quantity) > 0)
+    .map((p) => ({
+      tenant_id: tenantId,
+      product_id: p.id,
+      change_qty: Number(p.quantity),
+      type: "in",
+      source: "dashboard_csv_import",
+      reason: "Bulk CSV/Excel import",
+    }));
+
+  if (movements.length > 0) {
+    try {
+      await supabase.from("stock_movements").insert(movements);
+    } catch (movErr) {
+      console.warn("Could not insert initial stock movements for bulk import:", movErr);
+    }
+  }
+
+  revalidatePath("/dashboard/products");
+
+  return {
+    success: true,
+    imported: inserted?.length ?? toInsert.length,
+    skippedDuplicates,
+  };
+}
+

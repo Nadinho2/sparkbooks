@@ -139,6 +139,7 @@ export default async function ProductsPage() {
       categories={categories}
       tenantId={tenant.id}
       isOwner={isOwner}
+      canBulkUpload={tenant.planTier !== "free"}
     />
   );
 }
