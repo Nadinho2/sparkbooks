@@ -482,7 +482,10 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
         </div>
 
         {/* Security & Verification Seal */}
-        <div className="mt-4 pt-4 border-t border-dashed border-rule text-center">
+        <div className="mt-4 pt-4 border-t border-dashed border-rule text-center space-y-2">
+          <p className="text-xs font-semibold text-ink tracking-wide">
+            Thank You For Your Patronage!
+          </p>
           <div
             className="inline-flex items-center gap-1.5 text-[11px] px-3.5 py-1 rounded-full font-medium"
             style={{
