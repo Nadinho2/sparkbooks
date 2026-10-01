@@ -47,6 +47,7 @@ export function BulkUploadModal({
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewSearch, setPreviewSearch] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // If user is on Free plan, show upgrade modal
@@ -263,6 +264,14 @@ export function BulkUploadModal({
   });
 
   const validProducts = mappedProducts.filter((p) => p.name.trim().length > 0);
+  const displayedProducts = previewSearch.trim()
+    ? validProducts.filter(
+        (p) =>
+          p.name.toLowerCase().includes(previewSearch.toLowerCase()) ||
+          (p.categoryName &&
+            p.categoryName.toLowerCase().includes(previewSearch.toLowerCase())),
+      )
+    : validProducts;
   const nameColumnAssigned = Object.values(columnMap).includes("name");
 
   async function handleImport() {
@@ -453,56 +462,99 @@ export function BulkUploadModal({
 
               {/* Step 3: Preview */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-ink-muted">
-                    Preview ({validProducts.length} products ready)
-                  </h3>
-                  <label className="flex items-center gap-1.5 text-xs text-ink cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={skipDuplicates}
-                      onChange={(e) => setSkipDuplicates(e.target.checked)}
-                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <span>Skip duplicates already in catalog</span>
-                  </label>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-2.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-ink-muted">
+                      Preview ({validProducts.length} products ready)
+                    </h3>
+                    <span className="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
+                      Scrollable
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {validProducts.length > 5 && (
+                      <input
+                        type="text"
+                        placeholder="Search preview..."
+                        value={previewSearch}
+                        onChange={(e) => setPreviewSearch(e.target.value)}
+                        className="px-2.5 py-1 text-xs border border-slate-200 rounded-lg bg-white placeholder:text-slate-400 focus:outline-hidden focus:border-ink w-36 sm:w-44"
+                      />
+                    )}
+                    <label className="flex items-center gap-1.5 text-xs text-ink cursor-pointer select-none shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={skipDuplicates}
+                        onChange={(e) => setSkipDuplicates(e.target.checked)}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Skip duplicates</span>
+                    </label>
+                  </div>
                 </div>
 
-                <div className="border border-slate-200 rounded-xl overflow-hidden overflow-x-auto max-h-56">
+                <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-80 sm:max-h-96 relative bg-white shadow-2xs">
                   <table className="w-full text-xs">
-                    <thead className="bg-slate-100/80 text-left text-slate-600 sticky top-0 font-medium">
+                    <thead className="bg-slate-100 text-left text-slate-700 sticky top-0 z-10 font-semibold border-b border-slate-200 shadow-2xs">
                       <tr>
-                        <th className="py-2 px-3">Product Name</th>
-                        <th className="py-2 px-3">Category</th>
-                        <th className="py-2 px-3 text-right">Quantity</th>
-                        <th className="py-2 px-3">Unit</th>
-                        <th className="py-2 px-3 text-right">Unit Cost</th>
-                        <th className="py-2 px-3 text-right">Alert Level</th>
+                        <th className="py-2.5 px-3 w-10 text-center text-slate-400 font-mono">#</th>
+                        <th className="py-2.5 px-3">Product Name</th>
+                        <th className="py-2.5 px-3">Category</th>
+                        <th className="py-2.5 px-3 text-right">Quantity</th>
+                        <th className="py-2.5 px-3">Unit</th>
+                        <th className="py-2.5 px-3 text-right">Unit Cost</th>
+                        <th className="py-2.5 px-3 text-right">Alert Level</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
-                      {validProducts.slice(0, 15).map((p, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/60">
-                          <td className="py-2 px-3 font-medium text-ink">{p.name}</td>
-                          <td className="py-2 px-3 text-ink-muted">{p.categoryName || "—"}</td>
-                          <td className="py-2 px-3 text-right font-mono">{p.quantity ?? 0}</td>
-                          <td className="py-2 px-3 text-ink-muted">{p.unit || "item"}</td>
-                          <td className="py-2 px-3 text-right font-mono">
-                            {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono">
-                            {p.reorderThreshold != null ? p.reorderThreshold : "—"}
+                      {displayedProducts.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-ink-muted text-xs">
+                            No products match &ldquo;{previewSearch}&rdquo;
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        displayedProducts.map((p, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-2.5 px-3 text-center text-[10px] text-slate-400 font-mono select-none">
+                              {idx + 1}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-ink">{p.name}</td>
+                            <td className="py-2.5 px-3 text-ink-muted">
+                              {p.categoryName ? (
+                                <span className="inline-block bg-slate-100 px-2 py-0.5 rounded text-[11px] text-slate-700">
+                                  {p.categoryName}
+                                </span>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-800">
+                              {p.quantity ?? 0}
+                            </td>
+                            <td className="py-2.5 px-3 text-ink-muted">{p.unit || "item"}</td>
+                            <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-800">
+                              {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                              {p.reorderThreshold != null ? p.reorderThreshold : "—"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
-                {validProducts.length > 15 && (
-                  <p className="text-[11px] text-ink-muted text-center mt-1.5">
-                    Showing first 15 of {validProducts.length} products.
-                  </p>
-                )}
+
+                <div className="flex items-center justify-between text-[11px] text-ink-muted mt-2 px-1">
+                  <span>
+                    Showing {displayedProducts.length} of {validProducts.length} product{validProducts.length === 1 ? "" : "s"}
+                  </span>
+                  {validProducts.length > 5 && (
+                    <span className="text-slate-400">↕ Scroll down to review all rows</span>
+                  )}
+                </div>
               </div>
             </div>
           )}
