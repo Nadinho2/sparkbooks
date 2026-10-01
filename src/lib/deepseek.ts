@@ -13,6 +13,11 @@ export interface CatalogItem {
   pieces_per_pack?: number | null;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface ParsedEntry {
   entry_type:
     | "sale"
@@ -20,6 +25,8 @@ export interface ParsedEntry {
     | "stock_in"
     | "stock_check"
     | "stock_adjustment"
+    | "update_pack_size"
+    | "transaction_update"
     | "daily_summary"
     | "weekly_summary"
     | "debt"
@@ -69,7 +76,7 @@ ${catalogJson}
 
 Return ONLY valid JSON, no preamble, no markdown fences, matching this exact shape:
 {
-  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "stock_adjustment" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "help" | "unclear",
+  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "stock_adjustment" | "update_pack_size" | "transaction_update" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "help" | "unclear",
   "matched_product_id": number | null,
   "matched_product_name": string | null,
   "is_new_product": boolean,
@@ -112,7 +119,17 @@ Rules:
    - "stock_adjustment": Manual stock count corrections or adjustments directly from WhatsApp (e.g. "Correct Lush Hair stock to 40", "Adjust stock of Bone Straight to 25", "Set closure stock to 15", "Current physical count of Lush Hair is 45 pcs", "Counted Indomie stock, it is actually 30").
      'matched_product_id' and 'matched_product_name' set to the product.
      'quantity' is the NEW TARGET physical stock count (e.g. 40).
-   - "stock_check": Inquiries about inventory levels (e.g. "How many Bone Straight left?", "Check stock", "How many closure do I have?").
+   - "update_pack_size": Explicitly updating the pack size (pieces per carton/pack) for a product (e.g. "Lush attachment is 40 pcs per carton", or user replying "Update" or "Update pack size" to an assistant question).
+     'matched_product_id' and 'matched_product_name' set to the product.
+     'pieces_per_pack' is the pieces per carton/pack (e.g. 40).
+   - "transaction_update": Attaching purchase cost, payment method, customer, or missing details to a transaction ALREADY confirmed in the recent conversation thread (e.g. Assistant just recorded a restock, and user follows up with: "Currently the cartons are 50,000 per carton", "It was restock at 50k per carton", "The recorded 3 cartons of lash attachments was 50k each", or "Paid via transfer").
+     DO NOT add stock again! Set entry_type="transaction_update".
+     'matched_product_id' and 'matched_product_name' set to the product.
+     'quantity' is the number of cartons or items from that transaction.
+     'unit' is the unit (e.g. "cartons").
+     'unit_cost' is cost per unit/carton.
+     'amount' is the total cost.
+   - "stock_check": Inquiries about inventory levels (e.g. "How many Bone Straight left?", "Check stock", "How many closure do I have?", "What is my inventory").
    - "daily_summary": Inquiries about today's sales/profit/closing (e.g. "How much did I sell today?", "Today's summary", "Sales report", "Close today", "Daily closing").
    - "weekly_summary": Inquiries about this week's numbers (e.g. "Weekly sales", "How much this week?", "Weekly report").
    - "help": Greetings or instructions (e.g. "Help", "Hi", "Hello", "How does this work?").
@@ -147,7 +164,17 @@ Rules:
 6. SERVICES & BULK PACK SIZES:
    - Products with "is_service": true are services/labor (e.g. tailoring, haircut, alterations). They are logged as "sale" or "debt" without physical stock.
    - When a restock or sale mentions bulk packaging (e.g. carton, pack, crate, bundle, roll, box), set 'unit' to the bulk unit.
-   - If the merchant states how many single pieces are inside a carton (e.g. "40 per carton", "50 in a pack"), extract 'pieces_per_pack' as that number.`;
+   - If the merchant states how many single pieces are inside a carton (e.g. "40 per carton", "50 in a pack"), extract 'pieces_per_pack' as that number.
+
+7. CONVERSATIONAL MEMORY & CHAT THREAD CONTEXT:
+   - When previous chat messages are provided in the dialogue, use them to resolve context:
+     a) ANSWERS TO BOT QUESTIONS:
+        - If the assistant asked: "Do you want to update the pack size for [Product] to 40 pieces per carton, or adjust the stock quantity?" and the user replies "Update" or "Update pack size" or "40", classify as "update_pack_size" with pieces_per_pack=40!
+        - If the user responds to any assistant question with a concise answer (e.g. "40", "Transfer", "Amaka"), connect it directly to the question asked.
+     b) ATTACHING COST TO AN EARLIER RECORDED RESTOCK:
+        - If the assistant just confirmed a restock (e.g. "Stock Added: +120 of lush attachment (3 cartons x 40 pcs)"), and the user follows up with cost details (e.g. "It was restock at 50k per carton", "The recorded 3 cartons at 50k"):
+          Classify as "transaction_update" so the system updates the purchase cost on the existing transaction rather than restocking another 120 pieces!
+     c) PRONOUNS AND REFERENCES: Words like "it", "that", "the recorded 3 cartons" refer to the product and transaction in the recent messages.`;
 }
 
 /**
@@ -169,11 +196,13 @@ function extractJson(raw: string): string {
 }
 
 /**
- * Call DeepSeek to parse a seller's WhatsApp message into a structured entry.
+ * Call DeepSeek to parse a seller's WhatsApp message into a structured entry,
+ * with optional multi-turn conversation history for context.
  */
 export async function parseMessage(
   message: string,
   catalog: CatalogItem[],
+  history?: ChatMessage[],
 ): Promise<ParsedEntry> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const apiUrl =
@@ -188,6 +217,12 @@ export async function parseMessage(
   const timeout = setTimeout(() => controller.abort(), 20_000);
 
   try {
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: buildSystemPrompt(catalog) },
+      ...(history ?? []).map((h) => ({ role: h.role, content: h.content })),
+      { role: "user", content: message },
+    ];
+
     const res = await fetch(apiUrl, {
       method: "POST",
       headers: {
@@ -196,10 +231,7 @@ export async function parseMessage(
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: "system", content: buildSystemPrompt(catalog) },
-          { role: "user", content: message },
-        ],
+        messages,
         temperature: 0.1,
         max_tokens: 1024,
       }),
@@ -225,12 +257,16 @@ export async function parseMessage(
         "expense",
         "stock_in",
         "stock_check",
+        "stock_adjustment",
+        "update_pack_size",
+        "transaction_update",
         "daily_summary",
         "weekly_summary",
         "debt",
         "debt_repayment",
         "debt_check",
         "help",
+        "magic_login",
         "unclear",
       ];
       if (!validTypes.includes(parsed.entry_type)) {
