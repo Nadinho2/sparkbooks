@@ -21,6 +21,8 @@ export interface ProductRow {
   isLowStock: boolean;
   totalSold?: number;
   totalRevenue?: number;
+  isService?: boolean;
+  piecesPerPack?: number | null;
 }
 
 export interface Category {
@@ -425,6 +427,11 @@ export function ProductTable({
                         <span className="text-ink font-semibold group-hover:text-ink transition-colors">
                           {p.name}
                         </span>
+                        {p.piecesPerPack && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-sand border border-rule/60 text-ink-muted" title={`Pack size: ${p.piecesPerPack} ${p.unit} per carton/pack`}>
+                            {p.piecesPerPack} {p.unit}/pack
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -472,7 +479,11 @@ export function ProductTable({
                     )}
                   </td>
                   <td className="py-3.5 px-4 text-right">
-                    {p.isLowStock ? (
+                    {p.isService ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        Service
+                      </span>
+                    ) : p.isLowStock ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                         {p.quantity} {p.unit}
@@ -491,7 +502,7 @@ export function ProductTable({
                     {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
                   </td>
                   <td className="py-3.5 px-4 text-right font-mono font-medium text-ink">
-                    {formatNaira(p.totalValue)}
+                    {p.isService ? "—" : formatNaira(p.totalValue)}
                   </td>
                   <td className="py-3.5 px-4 text-ink-muted text-xs">{p.lastRestocked ?? "—"}</td>
                   <td className="py-3.5 px-4 text-right">
@@ -614,13 +625,26 @@ export function ProductTable({
                 {p.categoryName && (
                   <span className="text-xs text-ink-muted">{p.categoryName}</span>
                 )}
+                {p.piecesPerPack && (
+                  <span className="text-[10px] block text-ink-muted">
+                    Pack: {p.piecesPerPack} {p.unit}/carton
+                  </span>
+                )}
               </div>
               <div className="text-right">
-                <span className={`font-mono text-sm font-medium ${p.isLowStock ? "text-flag" : "text-ink"}`}>
-                  {p.quantity}
-                  <span className="text-ink-muted text-xs ml-1">{p.unit}</span>
-                </span>
-                <span className="block text-[10px] text-ink-muted">On hand</span>
+                {p.isService ? (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Service
+                  </span>
+                ) : (
+                  <>
+                    <span className={`font-mono text-sm font-medium ${p.isLowStock ? "text-flag" : "text-ink"}`}>
+                      {p.quantity}
+                      <span className="text-ink-muted text-xs ml-1">{p.unit}</span>
+                    </span>
+                    <span className="block text-[10px] text-ink-muted">On hand</span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -639,7 +663,7 @@ export function ProductTable({
               </div>
             </div>
 
-            {p.isLowStock && (
+            {!p.isService && p.isLowStock && (
               <p className="text-xs text-flag font-medium mb-2">
                 Low stock — below {p.reorderThreshold} threshold
               </p>

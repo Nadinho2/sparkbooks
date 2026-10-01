@@ -15,6 +15,8 @@ export type EditProductData = {
   unit: string;
   unitCost: number | null;
   reorderThreshold: number | null;
+  isService?: boolean;
+  piecesPerPack?: number | null;
   /** Only set if quantity changed — the delta (new - old) */
   quantityDelta?: number;
   quantityChangeReason?: string;
@@ -27,6 +29,8 @@ export type CreateProductData = {
   unit: string;
   unitCost: number | null;
   reorderThreshold: number | null;
+  isService?: boolean;
+  piecesPerPack?: number | null;
 };
 
 export async function createProduct(
@@ -63,25 +67,30 @@ export async function createProduct(
     );
   }
 
+  const isService = Boolean(data.isService);
+
   const { data: created, error } = await supabase
     .from("products")
     .insert({
       tenant_id: tenantId,
       name: data.name.trim(),
       category_id: data.categoryId,
-      quantity: data.quantity,
+      quantity: isService ? 0 : data.quantity,
       unit: data.unit,
       unit_cost: data.unitCost,
-      reorder_threshold:
-        data.reorderThreshold ?? Math.round(data.quantity * 0.2),
+      reorder_threshold: isService
+        ? null
+        : (data.reorderThreshold ?? Math.round(data.quantity * 0.2)),
+      is_service: isService,
+      pieces_per_pack: isService ? null : (data.piecesPerPack ?? null),
     })
-    .select("id, quantity")
+    .select("id, quantity, is_service")
     .single();
 
   if (error) throw new Error(error.message);
 
-  // Write initial stock movement if quantity > 0
-  if (created && Number(created.quantity) > 0) {
+  // Write initial stock movement if quantity > 0 and not a service
+  if (created && !created.is_service && Number(created.quantity) > 0) {
     await supabase.from("stock_movements").insert({
       tenant_id: tenantId,
       product_id: created.id,
@@ -106,23 +115,32 @@ export async function updateProduct(
 
   const supabase = createAdminClient();
 
+  const isService = Boolean(data.isService);
+  const updatePayload: Record<string, unknown> = {
+    name: data.name.trim(),
+    category_id: data.categoryId,
+    unit: data.unit,
+    unit_cost: data.unitCost,
+    reorder_threshold: isService ? null : data.reorderThreshold,
+    is_service: isService,
+    pieces_per_pack: isService ? null : (data.piecesPerPack ?? null),
+  };
+
+  if (isService) {
+    updatePayload.quantity = 0;
+  }
+
   // Update product fields
   const { error } = await supabase
     .from("products")
-    .update({
-      name: data.name.trim(),
-      category_id: data.categoryId,
-      unit: data.unit,
-      unit_cost: data.unitCost,
-      reorder_threshold: data.reorderThreshold,
-    })
+    .update(updatePayload)
     .eq("id", data.id)
     .eq("tenant_id", tenantId);
 
   if (error) throw new Error(error.message);
 
-  // If quantity changed, use centralized stock update (also handles low-stock alert)
-  if (data.quantityDelta && data.quantityDelta !== 0) {
+  // If quantity changed and not service, use centralized stock update (also handles low-stock alert)
+  if (!isService && data.quantityDelta && data.quantityDelta !== 0) {
     await updateProductStock({
       supabase,
       tenantId,
@@ -199,6 +217,8 @@ export interface ProductAnalytics {
     unit: string;
     unitCost: number | null;
     reorderThreshold: number | null;
+    isService?: boolean;
+    piecesPerPack?: number | null;
   };
   summary: {
     totalSold: number;
@@ -286,7 +306,7 @@ export async function getProductAnalytics(
   // 1. Fetch product
   const { data: product, error: prodErr } = await supabase
     .from("products")
-    .select("id, name, category_id, quantity, unit, unit_cost, reorder_threshold, categories(name)")
+    .select("id, name, category_id, quantity, unit, unit_cost, reorder_threshold, is_service, pieces_per_pack, categories(name)")
     .eq("id", productId)
     .eq("tenant_id", tenantId)
     .single();
@@ -436,7 +456,8 @@ export async function getProductAnalytics(
     totalRevenue > 0 && pUnitCost != null
       ? Math.round((grossProfit / totalRevenue) * 1000) / 10
       : null;
-  const currentStockValue = pUnitCost != null ? pQuantity * pUnitCost : 0;
+  const isProdService = Boolean(product.is_service);
+  const currentStockValue = (!isProdService && pUnitCost != null) ? pQuantity * pUnitCost : 0;
 
   return {
     product: {
@@ -444,11 +465,13 @@ export async function getProductAnalytics(
       name: product.name,
       categoryName: catObj?.name ?? null,
       categoryId: product.category_id,
-      quantity: pQuantity,
+      quantity: isProdService ? 0 : pQuantity,
       unit: product.unit,
       unitCost: pUnitCost,
       reorderThreshold:
-        product.reorder_threshold != null ? Number(product.reorder_threshold) : null,
+        !isProdService && product.reorder_threshold != null ? Number(product.reorder_threshold) : null,
+      isService: isProdService,
+      piecesPerPack: product.pieces_per_pack != null ? Number(product.pieces_per_pack) : null,
     },
     summary: {
       totalSold,
@@ -458,7 +481,7 @@ export async function getProductAnalytics(
       totalCogs,
       grossProfit,
       profitMarginPct,
-      currentStock: pQuantity,
+      currentStock: isProdService ? 0 : pQuantity,
       currentStockValue,
       totalRestocked,
       totalRestockCost,

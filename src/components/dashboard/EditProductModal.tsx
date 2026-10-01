@@ -33,6 +33,10 @@ export function EditProductModal({
   const [categoryId, setCategoryId] = useState(
     product?.categoryId ? String(product.categoryId) : "",
   );
+  const [isService, setIsService] = useState<boolean>(product?.isService ?? false);
+  const [piecesPerPack, setPiecesPerPack] = useState<string>(
+    product?.piecesPerPack != null ? String(product.piecesPerPack) : "",
+  );
   const [newQuantity, setNewQuantity] = useState(
     product ? String(product.quantity) : "0",
   );
@@ -48,7 +52,7 @@ export function EditProductModal({
   const [error, setError] = useState<string | null>(null);
 
   const quantityDelta = product ? Number(newQuantity) - product.quantity : 0;
-  const quantityChanged = !isAdd && quantityDelta !== 0;
+  const quantityChanged = !isAdd && !isService && quantityDelta !== 0;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -64,30 +68,37 @@ export function EditProductModal({
 
     setSaving(true);
     setError(null);
+    const parsedPack = piecesPerPack.trim() ? Number(piecesPerPack) : null;
+    const resolvedUnit = unit.trim() || (isService ? "service" : "pcs");
+
     try {
       if (isAdd) {
         await createProduct(tenantId, {
           name: name.trim(),
           categoryId: categoryId ? Number(categoryId) : null,
-          quantity: Number(newQuantity),
-          unit: unit.trim(),
+          quantity: isService ? 0 : Number(newQuantity),
+          unit: resolvedUnit,
           unitCost: unitCost ? Number(unitCost) : null,
-          reorderThreshold: reorderThreshold
-            ? Number(reorderThreshold)
-            : null,
+          reorderThreshold: isService
+            ? null
+            : (reorderThreshold ? Number(reorderThreshold) : null),
+          isService,
+          piecesPerPack: isService ? null : parsedPack,
         });
       } else {
         await updateProduct(tenantId, {
           id: product.id,
           name: name.trim(),
           categoryId: categoryId ? Number(categoryId) : null,
-          unit: unit.trim(),
+          unit: resolvedUnit,
           unitCost: unitCost ? Number(unitCost) : null,
-          reorderThreshold: reorderThreshold
-            ? Number(reorderThreshold)
-            : null,
-          quantityDelta,
+          reorderThreshold: isService
+            ? null
+            : (reorderThreshold ? Number(reorderThreshold) : null),
+          quantityDelta: isService ? 0 : quantityDelta,
           quantityChangeReason: reason || undefined,
+          isService,
+          piecesPerPack: isService ? null : parsedPack,
         });
       }
       onSaved();
@@ -133,67 +144,137 @@ export function EditProductModal({
             </select>
           </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-ink-muted">
-                {isAdd ? "Starting quantity" : "Quantity on hand"}
+          {/* Service toggle */}
+          <div className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <input
+              type="checkbox"
+              id="isServiceToggle"
+              checked={isService}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIsService(checked);
+                if (checked) {
+                  setNewQuantity("0");
+                  setReorderThreshold("");
+                  if (!unit) setUnit("service");
+                }
+              }}
+              className="mt-0.5 w-4 h-4 rounded border-slate-300 text-spark focus:ring-spark"
+            />
+            <label htmlFor="isServiceToggle" className="text-xs text-ink cursor-pointer select-none">
+              <span className="font-semibold block text-slate-800">This is a service (e.g. tailoring, alteration, haircut)</span>
+              <span className="text-ink-muted text-[11px] block mt-0.5">
+                Services do not track physical inventory and will never trigger low-stock alerts.
               </span>
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={newQuantity}
-                onChange={(e) => setNewQuantity(e.target.value)}
-                required
-                className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
-              />
-              {!isAdd && quantityChanged && (
-                <span
-                  className={`text-[10px] ${
-                    quantityDelta > 0 ? "text-money" : "text-flag"
-                  }`}
-                >
-                  {quantityDelta > 0 ? "+" : ""}
-                  {quantityDelta} from {product!.quantity}
-                </span>
-              )}
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-ink-muted">Unit *</span>
-              <input
-                value={unit}
-                onChange={(e) => setUnit(e.target.value)}
-                required
-                placeholder="pcs, cartons, kg"
-                className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors"
-              />
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-ink-muted">Unit cost (&#8358;)</span>
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={unitCost}
-                onChange={(e) => setUnitCost(e.target.value)}
-                className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-ink-muted">Reorder threshold</span>
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={reorderThreshold}
-                onChange={(e) => setReorderThreshold(e.target.value)}
-                className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
-              />
-            </label>
-          </div>
+          {!isService ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-muted">
+                    {isAdd ? "Starting quantity" : "Quantity on hand"}
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={newQuantity}
+                    onChange={(e) => setNewQuantity(e.target.value)}
+                    required={!isService}
+                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
+                  />
+                  {!isAdd && quantityChanged && (
+                    <span
+                      className={`text-[10px] ${
+                        quantityDelta > 0 ? "text-money" : "text-flag"
+                      }`}
+                    >
+                      {quantityDelta > 0 ? "+" : ""}
+                      {quantityDelta} from {product!.quantity}
+                    </span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-muted">Selling Unit *</span>
+                  <input
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                    required
+                    placeholder="pcs, rolls, kg"
+                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-muted">Unit cost (&#8358;)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={unitCost}
+                    onChange={(e) => setUnitCost(e.target.value)}
+                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-muted">Reorder threshold</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={reorderThreshold}
+                    onChange={(e) => setReorderThreshold(e.target.value)}
+                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
+                  />
+                </label>
+              </div>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-ink-muted">
+                  Pieces per carton / pack (optional)
+                </span>
+                <input
+                  type="number"
+                  min="1"
+                  step="any"
+                  value={piecesPerPack}
+                  onChange={(e) => setPiecesPerPack(e.target.value)}
+                  placeholder="e.g. 40 (if bought in cartons & sold in pieces)"
+                  className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
+                />
+                <span className="text-[10px] text-ink-muted">
+                  Restock in cartons on WhatsApp, and SparkBooks will auto-multiply into single pieces!
+                </span>
+              </label>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-ink-muted">Standard / Base Service Charge (&#8358;, optional)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={unitCost}
+                  onChange={(e) => setUnitCost(e.target.value)}
+                  placeholder="e.g. 25000"
+                  className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
+                />
+              </label>
+              <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-xl text-xs text-indigo-900">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <span>🛠️</span> Service Item Configured
+                </p>
+                <p className="text-[11px] text-indigo-700 mt-1">
+                  When you record sales or tailoring jobs on WhatsApp (e.g. &ldquo;Sewed Senator 30k&rdquo;), revenue is logged directly into your ledger without deducting stock.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Reason dropdown — only for edit mode with quantity change */}
           {quantityChanged && (

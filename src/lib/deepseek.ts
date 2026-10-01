@@ -9,6 +9,8 @@ export interface CatalogItem {
   category: string | null;
   unit: string;
   unit_cost: number | null;
+  is_service?: boolean;
+  pieces_per_pack?: number | null;
 }
 
 export interface ParsedEntry {
@@ -17,6 +19,7 @@ export interface ParsedEntry {
     | "expense"
     | "stock_in"
     | "stock_check"
+    | "stock_adjustment"
     | "daily_summary"
     | "weekly_summary"
     | "debt"
@@ -37,6 +40,7 @@ export interface ParsedEntry {
   customer_name?: string | null;
   amount_paid?: number | null;
   amount_owed?: number | null;
+  pieces_per_pack?: number | null;
   confidence: number;
   clarification_needed: string | null;
 }
@@ -49,6 +53,8 @@ export function buildSystemPrompt(catalog: CatalogItem[]): string {
       category: c.category ?? "Uncategorized",
       unit: c.unit,
       unit_cost: c.unit_cost,
+      is_service: c.is_service ?? false,
+      pieces_per_pack: c.pieces_per_pack ?? null,
     })),
     null,
     2,
@@ -63,7 +69,7 @@ ${catalogJson}
 
 Return ONLY valid JSON, no preamble, no markdown fences, matching this exact shape:
 {
-  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "help" | "unclear",
+  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "stock_adjustment" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "help" | "unclear",
   "matched_product_id": number | null,
   "matched_product_name": string | null,
   "is_new_product": boolean,
@@ -76,31 +82,36 @@ Return ONLY valid JSON, no preamble, no markdown fences, matching this exact sha
   "customer_name": string | null,
   "amount_paid": number | null,
   "amount_owed": number | null,
+  "pieces_per_pack": number | null,
   "confidence": number,
   "clarification_needed": string | null
 }
 
 Rules:
 1. ENTRY TYPES:
-   - "sale": A completed sale (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000 via OPay transfer", "Sold to Chioma 1 dress 30k cash").
+   - "sale": A completed sale (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000 via OPay transfer", "Sold to Chioma 1 dress 30k cash", "Sewed Senator 30k for Emeka").
      'amount' is the TOTAL revenue in Naira.
      'customer_name' is the customer/buyer's name if mentioned (e.g. "Sold to Chioma 1 dress 30k" -> customer_name="Chioma", "Sold 1 wig to Sarah for 50k" -> customer_name="Sarah"). If no buyer is mentioned, customer_name=null.
-   - "debt": A sale where the customer made a partial payment or bought on credit (e.g. "Sold 1 bone straight 100k to Blessing, she paid 60k balance 40k", "Sold 2 closure to Amaka for 50k on credit", "Gave Tunde 2 items for 30k, paid half 15k").
+   - "debt": A sale where the customer made a partial payment or bought on credit (e.g. "Sold 1 bone straight 100k to Blessing, she paid 60k balance 40k", "Sold 2 closure to Amaka for 50k on credit", "Gave Tunde 2 items for 30k, paid half 15k", "Sewed Agbada 50k for Chief Obi, paid 30k balance 20k").
      'amount' is the TOTAL sale value (e.g. 100000).
      'amount_paid' is what was paid right now (e.g. 60000). If zero paid, amount_paid=0.
      'amount_owed' is the remaining unpaid balance (e.g. 40000).
-     'customer_name' is the customer's name (e.g. "Blessing", "Amaka", "Tunde").
+     'customer_name' is the customer's name (e.g. "Blessing", "Amaka", "Tunde", "Chief Obi").
    - "debt_repayment": Customer paying back an existing debt or balance (e.g. "Blessing paid her 40k balance", "Amaka paid 20k for the hair she was owing", "Received 15k balance from Tunde").
      'amount' is the amount paid back in Naira.
      'customer_name' is the customer who paid.
    - "debt_check": Inquiries about customer debts/balances (e.g. "Who is owing me?", "Show my debtors", "How much is Blessing owing?", "Check unpaid debts").
      'customer_name' can be set if asking about a specific person.
-   - "expense": Operational or business expenses (e.g. "Paid shop rent 50,000", "Fuel 5k cash", "Transport 2000", "Dispatch rider 3k", "Generator fuel 5000").
+   - "expense": Operational or business expenses (e.g. "Paid shop rent 50,000", "Fuel 5k cash", "Transport 2000", "Dispatch rider 3k", "Generator fuel 5000", "Bought 5 rolls of thread and 20 zips 12k").
      For general expenses, set matched_product_id=null, matched_product_name="Shop rent" (or expense title), amount=amount.
-   - "stock_in": Adding or restocking inventory (e.g. "I have restocked 2*6 closure 50 pcs at cost price of 20k each", "Restocked 10 Bone Straight").
-     'quantity' is the number of units added.
+   - "stock_in": Adding or restocking inventory (e.g. "I have restocked 2*6 closure 50 pcs at cost price of 20k each", "Restocked 10 Bone Straight", "Restocked 2 cartons Lush Attachment 50k", "Restocked 2 cartons Lush, 40 per carton 50k").
+     'quantity' is the number of units/cartons added.
      'unit_cost' is the unit purchase cost in Naira.
      'amount' is total purchase cost.
+     'pieces_per_pack' is the pack size if explicitly stated (e.g. "40 per carton" -> pieces_per_pack=40).
+   - "stock_adjustment": Manual stock count corrections or adjustments directly from WhatsApp (e.g. "Correct Lush Hair stock to 40", "Adjust stock of Bone Straight to 25", "Set closure stock to 15", "Current physical count of Lush Hair is 45 pcs", "Counted Indomie stock, it is actually 30").
+     'matched_product_id' and 'matched_product_name' set to the product.
+     'quantity' is the NEW TARGET physical stock count (e.g. 40).
    - "stock_check": Inquiries about inventory levels (e.g. "How many Bone Straight left?", "Check stock", "How many closure do I have?").
    - "daily_summary": Inquiries about today's sales/profit/closing (e.g. "How much did I sell today?", "Today's summary", "Sales report", "Close today", "Daily closing").
    - "weekly_summary": Inquiries about this week's numbers (e.g. "Weekly sales", "How much this week?", "Weekly report").
@@ -131,7 +142,12 @@ Rules:
      - "Sold 1 wig 100k to Blessing, paid 60k balance 40k" -> customer_name="Blessing"
      - "Blessing paid 40k balance" -> customer_name="Blessing"
    - Do NOT confuse product names with customer names (e.g. "Bone Straight" is product, "Amaka" is customer).
-   - If no customer is mentioned, set customer_name=null.`;
+   - If no customer is mentioned, set customer_name=null.
+
+6. SERVICES & BULK PACK SIZES:
+   - Products with "is_service": true are services/labor (e.g. tailoring, haircut, alterations). They are logged as "sale" or "debt" without physical stock.
+   - When a restock or sale mentions bulk packaging (e.g. carton, pack, crate, bundle, roll, box), set 'unit' to the bulk unit.
+   - If the merchant states how many single pieces are inside a carton (e.g. "40 per carton", "50 in a pack"), extract 'pieces_per_pack' as that number.`;
 }
 
 /**

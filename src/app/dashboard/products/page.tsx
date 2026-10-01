@@ -11,7 +11,7 @@ export default async function ProductsPage() {
   const { data: products } = await supabase
     .from("products")
     .select(
-      "id, name, category_id, quantity, unit, unit_cost, reorder_threshold, categories(name)",
+      "id, name, category_id, quantity, unit, unit_cost, reorder_threshold, is_service, pieces_per_pack, categories(name)",
     )
     .eq("tenant_id", tenant.id)
     .is("deleted_at", null)
@@ -102,6 +102,8 @@ export default async function ProductsPage() {
   // Build rows
   const rows: ProductRow[] = (products ?? []).map((p) => {
     const catObj = (p.categories as unknown as { name: string }[])?.[0] ?? null;
+    const isService = Boolean(p.is_service);
+    const piecesPerPack = p.pieces_per_pack != null ? Number(p.pieces_per_pack) : null;
     const quantity = Number(p.quantity);
     const unitCost = p.unit_cost != null ? Number(p.unit_cost) : null;
     const threshold = p.reorder_threshold != null ? Number(p.reorder_threshold) : null;
@@ -112,15 +114,17 @@ export default async function ProductsPage() {
       name: p.name,
       categoryName: catObj?.name ?? null,
       categoryId: p.category_id,
-      quantity,
+      quantity: isService ? 0 : quantity,
       unit: p.unit,
       unitCost,
-      reorderThreshold: threshold,
+      reorderThreshold: isService ? null : threshold,
       lastRestocked: restockMap[p.id] ?? null,
-      totalValue: unitCost != null ? quantity * unitCost : 0,
-      isLowStock: threshold != null && quantity <= threshold,
+      totalValue: (!isService && unitCost != null) ? quantity * unitCost : 0,
+      isLowStock: !isService && threshold != null && quantity <= threshold,
       totalSold: salesInfo.totalSold,
       totalRevenue: salesInfo.totalRevenue,
+      isService,
+      piecesPerPack,
     };
   });
 

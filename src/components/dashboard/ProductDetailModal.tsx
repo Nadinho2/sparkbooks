@@ -223,20 +223,36 @@ export function ProductDetailModal({
 
             {/* Subtitle details pill */}
             <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-              <span className="bg-sand/40 border border-rule/50 px-2.5 py-1 rounded-md">
-                Stock Valuation:{" "}
-                <strong className="text-ink font-mono font-medium">
-                  {unitCost != null ? formatNaira(currentStockValue) : "—"}
-                </strong>
-              </span>
-              <span className="bg-sand/40 border border-rule/50 px-2.5 py-1 rounded-md">
-                Reorder Alert:{" "}
-                <strong className="text-ink font-mono font-medium">
-                  {product.reorderThreshold != null
-                    ? `${product.reorderThreshold} ${product.unit}`
-                    : "None"}
-                </strong>
-              </span>
+              {product.isService ? (
+                <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2.5 py-1 rounded-md font-medium">
+                  🛠️ Service Item (Untracked Inventory)
+                </span>
+              ) : (
+                <>
+                  <span className="bg-sand/40 border border-rule/50 px-2.5 py-1 rounded-md">
+                    Stock Valuation:{" "}
+                    <strong className="text-ink font-mono font-medium">
+                      {unitCost != null ? formatNaira(currentStockValue) : "—"}
+                    </strong>
+                  </span>
+                  <span className="bg-sand/40 border border-rule/50 px-2.5 py-1 rounded-md">
+                    Reorder Alert:{" "}
+                    <strong className="text-ink font-mono font-medium">
+                      {product.reorderThreshold != null
+                        ? `${product.reorderThreshold} ${product.unit}`
+                        : "None"}
+                    </strong>
+                  </span>
+                  {product.piecesPerPack && (
+                    <span className="bg-sand/40 border border-rule/50 px-2.5 py-1 rounded-md">
+                      Pack Size:{" "}
+                      <strong className="text-ink font-mono font-medium">
+                        {product.piecesPerPack} {product.unit}/carton
+                      </strong>
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
 

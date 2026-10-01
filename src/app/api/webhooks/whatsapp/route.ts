@@ -60,6 +60,23 @@ function verifyHmacSignature(body: string, signature: string): boolean {
    Helpers
    ─────────────────────────────────────────── */
 
+const BULK_UNITS = [
+  "carton",
+  "cartons",
+  "pack",
+  "packs",
+  "crate",
+  "crates",
+  "bundle",
+  "bundles",
+  "box",
+  "boxes",
+  "roll",
+  "rolls",
+  "bag",
+  "bags",
+];
+
 /**
  * Fast deterministic intent detection for common queries and commands.
  * Runs instantly without waiting for LLM completion.
@@ -114,6 +131,78 @@ function detectFastIntent(
   }
 
   return null;
+}
+
+/**
+ * Parse response to pack size & restock cost clarification.
+ * Handles answers like "40", "40 pcs", "40 pieces, 60k", "40 pcs, 30k each", "60,000 for 40 pcs"
+ */
+function parsePackClarificationReply(
+  text: string,
+  rawQty: number,
+  existingAmount?: number | null,
+  existingUnitCost?: number | null,
+): { packSize: number | null; totalCost: number | null } {
+  let packSize: number | null = null;
+  let totalCost: number | null = existingAmount ?? (existingUnitCost ? existingUnitCost * rawQty : null);
+
+  const clean = text.trim();
+
+  // 1. Look for cost with 'k' (e.g. 50k, 25k each)
+  const kMatch = clean.match(/(?:cost|bought|at|for|total|price)?\s*(?:₦|ngn)?\s*(\d+(?:\.\d+)?)\s*k\b/i);
+  if (kMatch) {
+    const val = parseFloat(kMatch[1]) * 1000;
+    if (/each|per\s+(?:carton|pack|box|bundle|crate|roll|bag)/i.test(clean)) {
+      totalCost = val * rawQty;
+    } else {
+      totalCost = val;
+    }
+  }
+
+  // 2. Look for currency sign ₦ or NGN or price with comma (e.g. ₦50,000 or 50,000)
+  if (!kMatch) {
+    const nairaMatch = clean.match(/(?:₦|ngn)\s*(\d[\d,]*(?:\.\d+)?)/i);
+    if (nairaMatch) {
+      const val = parseFloat(nairaMatch[1].replace(/,/g, ""));
+      if (/each|per\s+(?:carton|pack|box|bundle|crate|roll|bag)/i.test(clean)) {
+        totalCost = val * rawQty;
+      } else {
+        totalCost = val;
+      }
+    }
+  }
+
+  // 3. Look for explicit pieces indicator: e.g. "40 pcs", "40 pieces", "40 per carton"
+  const pcsMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:pcs|pieces|piece|pk|items|units|per\s+(?:carton|pack|box))/i);
+  if (pcsMatch) {
+    packSize = parseFloat(pcsMatch[1]);
+  }
+
+  // 4. Inspect numeric tokens in the string for packSize or cost
+  const allNums = clean.match(/\b\d[\d,]*(?:\.\d+)?\b/g);
+  if (allNums) {
+    for (const numStr of allNums) {
+      const val = parseFloat(numStr.replace(/,/g, ""));
+      if (isNaN(val) || val <= 0) continue;
+
+      if (totalCost && (val === totalCost || val === Math.round(totalCost / rawQty) || val === Math.round(totalCost / 1000))) {
+        continue;
+      }
+
+      // If it's a large number (>= 1000) and we don't have totalCost yet, it's cost
+      if (val >= 1000 && !totalCost) {
+        if (/each|per\s+(?:carton|pack|box|bundle|crate|roll|bag)/i.test(clean)) {
+          totalCost = val * rawQty;
+        } else {
+          totalCost = val;
+        }
+      } else if (!packSize && val > 0 && val < 5000) {
+        packSize = val;
+      }
+    }
+  }
+
+  return { packSize, totalCost };
 }
 
 async function findTenantByPhone(
@@ -543,10 +632,190 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     console.warn("Could not update tenant last_activity_at:", err);
   }
 
+  const nf = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 0,
+  });
+
+  // ── 4b. CHECK FOR PENDING INTERACTIVE REPLIES (e.g. Pack Size Clarification) ──
+  try {
+    const { data: pendingPackMsg } = await supabase
+      .from("whatsapp_messages")
+      .select("id, metadata")
+      .eq("tenant_id", tenant.id)
+      .eq("status", "pending_confirmation")
+      .not("metadata->pending_action", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingPackMsg && pendingPackMsg.metadata) {
+      const meta = pendingPackMsg.metadata as {
+        pending_action?: string;
+        product_id?: number | null;
+        product_name?: string;
+        raw_qty?: number;
+        unit?: string;
+        unit_cost?: number | null;
+        amount?: number | null;
+      };
+
+      if (meta.pending_action === "pack_size_clarification" && (meta.product_id || meta.product_name) && meta.raw_qty) {
+        // User wants to cancel
+        if (rawText && /^(cancel|nevermind|abort|stop|no)$/i.test(rawText.trim())) {
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "failed" })
+            .eq("id", pendingPackMsg.id);
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "matched" })
+            .eq("id", waMsg.id);
+          await replyToUser(supabase, tenant.id, fromPhone, "Restock cancelled.", senderMemberId);
+          return;
+        }
+
+        const { packSize, totalCost } = parsePackClarificationReply(
+          rawText || "",
+          meta.raw_qty,
+          meta.amount,
+          meta.unit_cost,
+        );
+
+        if (packSize && packSize > 0) {
+          const totalPcs = meta.raw_qty * packSize;
+          const perPieceCost = totalCost && totalPcs > 0
+            ? Math.round(totalCost / totalPcs)
+            : meta.unit_cost
+            ? Math.round(meta.unit_cost / packSize)
+            : null;
+
+          let targetProductId = meta.product_id ?? null;
+          let targetProductName = meta.product_name || "New Product";
+
+          // If product did not exist in catalog, create it now
+          if (!targetProductId) {
+            const { checkProductLimit } = await import("@/lib/billing-server");
+            const pLimit = await checkProductLimit(tenant.id);
+            if (!pLimit.allowed) {
+              const reply = `Can't add "${targetProductName}" — you've reached your product limit (${pLimit.currentCount}/${pLimit.maxProducts}). Upgrade your plan to add more.`;
+              await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+              return;
+            }
+
+            const { data: createdProduct, error: pErr } = await supabase
+              .from("products")
+              .insert({
+                tenant_id: tenant.id,
+                name: targetProductName,
+                quantity: totalPcs,
+                unit: "pcs",
+                unit_cost: perPieceCost,
+                pieces_per_pack: packSize,
+                is_service: false,
+              })
+              .select("id, name")
+              .single();
+
+            if (pErr || !createdProduct) {
+              console.error("Failed to auto-create product from pack clarification:", pErr);
+              const reply = `Could not create product "${targetProductName}". Please try again or create it from the dashboard.`;
+              await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+              return;
+            }
+
+            targetProductId = createdProduct.id;
+            targetProductName = createdProduct.name;
+
+            await supabase.from("stock_movements").insert({
+              tenant_id: tenant.id,
+              product_id: targetProductId,
+              change_qty: totalPcs,
+              type: "in",
+              source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+              reason: `Initial stock: ${meta.raw_qty} ${meta.unit || "carton(s)"} (${packSize} pcs/carton)`,
+              linked_message_id: waMsg.id,
+            });
+          } else {
+            // Existing product: update pieces_per_pack
+            await supabase
+              .from("products")
+              .update({ pieces_per_pack: packSize })
+              .eq("id", targetProductId);
+
+            await updateProductStock({
+              supabase,
+              tenantId: tenant.id,
+              productId: targetProductId,
+              changeQty: totalPcs,
+              type: "in",
+              source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+              linkedMessageId: waMsg.id,
+              alertPhone: fromPhone,
+              reason: `Restocked ${meta.raw_qty} ${meta.unit || "cartons"} (${packSize} pcs/carton)`,
+            });
+
+            if (perPieceCost != null) {
+              await supabase
+                .from("products")
+                .update({ unit_cost: perPieceCost })
+                .eq("id", targetProductId);
+            }
+          }
+
+          let ledgerId: number | null = null;
+          if (totalCost && totalCost > 0) {
+            const { data: ledger } = await supabase
+              .from("ledger_entries")
+              .insert({
+                tenant_id: tenant.id,
+                type: "expense",
+                amount: totalCost,
+                item_description: `Inventory restock: ${meta.raw_qty} ${meta.unit || "carton(s)"} (${totalPcs} pcs) of ${targetProductName}`,
+                product_id: targetProductId,
+                source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+                linked_message_id: waMsg.id,
+                confidence_score: 1.0,
+              })
+              .select("id")
+              .single();
+
+            ledgerId = ledger?.id ?? null;
+          }
+
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "matched", linked_entry_id: ledgerId })
+            .eq("id", pendingPackMsg.id);
+
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "matched", linked_entry_id: ledgerId })
+            .eq("id", waMsg.id);
+
+          const costStr = totalCost
+            ? ` Recorded purchase cost of *${nf.format(totalCost)}* (${nf.format(perPieceCost ?? 0)}/pc).`
+            : "";
+          const reply =
+            `✅ *Saved & Restocked!*\n` +
+            `• *${targetProductName}*: 1 ${meta.unit || "carton"} = *${packSize} pcs* (saved to catalog)\n` +
+            `• Added *+${totalPcs} pcs* to your stock.${costStr}\n\n` +
+            `_I will remember this pack size for future restocks!_ 🚀`;
+
+          await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+          return;
+        }
+      }
+    }
+  } catch (packErr) {
+    console.warn("Pending pack size reply check error:", packErr);
+  }
+
   // ── 5. FETCH PRODUCT CATALOG ──
   const { data: catalog } = await supabase
     .from("products")
-    .select("id, name, unit, unit_cost, categories(name)")
+    .select("id, name, unit, unit_cost, is_service, pieces_per_pack, categories(name)")
     .eq("tenant_id", tenant.id)
     .is("deleted_at", null);
 
@@ -558,6 +827,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       category: cat?.name ?? null,
       unit: p.unit,
       unit_cost: p.unit_cost,
+      is_service: p.is_service ?? false,
+      pieces_per_pack: p.pieces_per_pack != null ? Number(p.pieces_per_pack) : null,
     };
   });
 
@@ -607,12 +878,6 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
   // Increment usage counter
   await incrementMessageCount(tenant.id);
-
-  const nf = new Intl.NumberFormat("en-NG", {
-    style: "currency",
-    currency: "NGN",
-    minimumFractionDigits: 0,
-  });
 
   // ── 7. EXECUTE ACTION BY ENTRY TYPE ──
 
@@ -676,26 +941,39 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     if (parsed.matched_product_id) {
       const { data: prod } = await supabase
         .from("products")
-        .select("name, quantity, unit, unit_cost")
+        .select("name, quantity, unit, unit_cost, is_service, pieces_per_pack")
         .eq("id", parsed.matched_product_id)
         .single();
 
       if (prod) {
-        reply = `📦 *Stock Check:*\nYou have *${prod.quantity} ${prod.unit}* of *${prod.name}* in stock.`;
+        if (prod.is_service) {
+          reply = `ℹ️ *${prod.name}* is a service (labor/craft — stock is not tracked).`;
+        } else {
+          const packNote = prod.pieces_per_pack ? ` (${prod.pieces_per_pack} ${prod.unit}/carton)` : "";
+          reply = `📦 *Stock Check:*\nYou have *${prod.quantity} ${prod.unit}* of *${prod.name}* in stock${packNote}.`;
+        }
       } else {
         reply = `Could not find that product in your catalog.`;
       }
     } else {
       const { data: prods } = await supabase
         .from("products")
-        .select("name, quantity, unit")
+        .select("name, quantity, unit, is_service")
         .eq("tenant_id", tenant.id)
         .is("deleted_at", null)
         .order("quantity", { ascending: true })
         .limit(10);
 
       if (prods && prods.length > 0) {
-        reply = `📦 *Current Stock Levels:*\n` + prods.map((p) => `• ${p.name}: *${p.quantity} ${p.unit}*`).join("\n");
+        reply =
+          `📦 *Current Stock Levels:*\n` +
+          prods
+            .map((p) =>
+              p.is_service
+                ? `• ${p.name}: *(Service)*`
+                : `• ${p.name}: *${p.quantity} ${p.unit}*`
+            )
+            .join("\n");
       } else {
         reply = `You have no products in your catalog yet.`;
       }
@@ -705,6 +983,102 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .from("whatsapp_messages")
       .update({ status: "matched" })
       .eq("id", waMsg.id);
+
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
+  // 7B2: STOCK ADJUSTMENT / MANUAL CORRECTION VIA WHATSAPP
+  if (entry_type === "stock_adjustment" && confidence >= 0.7) {
+    let productId = parsed.matched_product_id;
+    let productName = parsed.matched_product_name;
+
+    if (!productId && catalog && catalog.length > 0 && rawText) {
+      const targetName = (parsed.new_product_name || parsed.matched_product_name || "").toLowerCase().trim();
+      if (targetName) {
+        const found = catalog.find((c) =>
+          c.name.toLowerCase().includes(targetName) ||
+          targetName.includes(c.name.toLowerCase())
+        );
+        if (found) {
+          productId = found.id;
+          productName = found.name;
+        }
+      }
+    }
+
+    if (!productId) {
+      await supabase
+        .from("whatsapp_messages")
+        .update({ status: "failed", failure_reason: "product_not_found" })
+        .eq("id", waMsg.id);
+
+      await replyToUser(
+        supabase,
+        tenant.id,
+        fromPhone,
+        `I couldn't identify the product to adjust. Please state the exact product name, e.g. "Correct Lush Hair stock to 40".`,
+        senderMemberId,
+      );
+      return;
+    }
+
+    const { data: prod } = await supabase
+      .from("products")
+      .select("id, name, quantity, unit, is_service")
+      .eq("id", productId)
+      .single();
+
+    if (!prod) {
+      await replyToUser(supabase, tenant.id, fromPhone, `Product not found.`, senderMemberId);
+      return;
+    }
+
+    if (prod.is_service) {
+      await supabase
+        .from("whatsapp_messages")
+        .update({ status: "matched" })
+        .eq("id", waMsg.id);
+
+      await replyToUser(
+        supabase,
+        tenant.id,
+        fromPhone,
+        `ℹ️ *${prod.name}* is marked as a service (stock count is not tracked). No adjustment needed!`,
+        senderMemberId,
+      );
+      return;
+    }
+
+    const targetQty = Math.max(0, Math.abs(parsed.quantity ?? 0));
+    const currentQty = Number(prod.quantity);
+    const delta = targetQty - currentQty;
+
+    if (delta !== 0) {
+      await updateProductStock({
+        supabase,
+        tenantId: tenant.id,
+        productId: prod.id,
+        changeQty: delta,
+        type: "manual_adjustment",
+        source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+        linkedMessageId: waMsg.id,
+        reason: "Stock correction via WhatsApp",
+      });
+    }
+
+    await supabase
+      .from("whatsapp_messages")
+      .update({ status: "matched" })
+      .eq("id", waMsg.id);
+
+    const deltaSign = delta > 0 ? "+" : "";
+    const reply =
+      `📦 *Stock Count Adjusted!*\n` +
+      `• Product: *${prod.name}*\n` +
+      `• Previous Count: *${currentQty} ${prod.unit}*\n` +
+      `• New Stock: *${targetQty} ${prod.unit}* (${deltaSign}${delta} adjustment)\n\n` +
+      `_Audit record created: Stock correction via WhatsApp._`;
 
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
     return;
@@ -1032,14 +1406,29 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const customerName = (parsed.customer_name || "Customer").trim();
     const method = parsed.payment_method ?? null;
     const methodTag = method ? ` (${method.toUpperCase()})` : "";
+    // Check if product is service or bulk pack
+    let qtyToDeduct = qty;
+    let isProdService = false;
+    if (productId) {
+      const { data: prodInfo } = await supabase
+        .from("products")
+        .select("is_service, pieces_per_pack, unit")
+        .eq("id", productId)
+        .maybeSingle();
 
-    // Deduct stock if product matched
-    if (productId && qty > 0) {
+      isProdService = Boolean(prodInfo?.is_service);
+      if (prodInfo?.pieces_per_pack && BULK_UNITS.includes(unit.toLowerCase().trim())) {
+        qtyToDeduct = qty * Number(prodInfo.pieces_per_pack);
+      }
+    }
+
+    // Deduct stock if product matched and not a service
+    if (productId && qtyToDeduct > 0 && !isProdService) {
       await updateProductStock({
         supabase,
         tenantId: tenant.id,
         productId,
-        changeQty: -qty,
+        changeQty: -qtyToDeduct,
         type: "out",
         source: isVoice ? "whatsapp_voice" : "whatsapp_text",
         linkedMessageId: waMsg.id,
@@ -1127,6 +1516,71 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         ? Math.max(0, Math.abs(parsed.amount))
         : (qty > 0 && unitCost ? qty * unitCost : null);
 
+    // 0. Check product details (service vs pack size)
+    const { data: prodInfo } = productId
+      ? await supabase
+          .from("products")
+          .select("id, name, unit, is_service, pieces_per_pack")
+          .eq("id", productId)
+          .maybeSingle()
+      : { data: null };
+
+    if (prodInfo?.is_service) {
+      await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+      await replyToUser(
+        supabase,
+        tenant.id,
+        fromPhone,
+        `ℹ️ *${productName}* is marked as a service (services don't track physical inventory). If you bought materials or paid for labor, please record it as an expense (e.g. "Bought thread and lining 10k").`,
+        senderMemberId,
+      );
+      return;
+    }
+
+    const isBulk = BULK_UNITS.includes(unit.toLowerCase().trim());
+    let packSize = parsed.pieces_per_pack ?? (prodInfo?.pieces_per_pack ? Number(prodInfo.pieces_per_pack) : null);
+
+    // If restocked in cartons/bulk, but pack size is unknown (whether existing or new product):
+    if (isBulk && !packSize) {
+      const targetName = (productName || parsed.new_product_name || parsed.matched_product_name || "this item").trim();
+      await supabase
+        .from("whatsapp_messages")
+        .update({
+          status: "pending_confirmation",
+          metadata: {
+            pending_action: "pack_size_clarification",
+            product_id: productId ?? null,
+            product_name: targetName,
+            raw_qty: qty,
+            unit,
+            unit_cost: unitCost,
+            amount: totalAmount,
+          },
+        })
+        .eq("id", waMsg.id);
+
+      const hasCost = totalAmount != null && totalAmount > 0;
+      const promptReply =
+        `📦 *Carton / Bulk Restock Detected:*\n` +
+        `Before I record this: how many pieces are inside 1 ${unit} of *${targetName}*?` +
+        (!hasCost ? ` (And how much was the total cost or cost per ${unit}?)` : "") +
+        `\n\n` +
+        `_(Reply e.g. "40 pieces" or "40 pcs, 50k")_`;
+
+      await replyToUser(supabase, tenant.id, fromPhone, promptReply, senderMemberId);
+      return;
+    }
+
+    // If pack size was explicitly stated in this message, save it to product
+    if (parsed.pieces_per_pack && productId && (!prodInfo?.pieces_per_pack || Number(prodInfo.pieces_per_pack) !== parsed.pieces_per_pack)) {
+      await supabase.from("products").update({ pieces_per_pack: parsed.pieces_per_pack }).eq("id", productId);
+    }
+
+    const actualQty = (isBulk && packSize) ? qty * packSize : qty;
+    const effectiveUnitCost = totalAmount && actualQty > 0
+      ? Math.round(totalAmount / actualQty)
+      : (unitCost && isBulk && packSize ? Math.round(unitCost / packSize) : unitCost);
+
     // If new product (not in catalog yet), auto-create product with initial inventory
     if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
       const newName = (parsed.new_product_name || parsed.matched_product_name || "New Product").trim();
@@ -1144,9 +1598,10 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         .insert({
           tenant_id: tenant.id,
           name: newName,
-          quantity: qty,
+          quantity: actualQty,
           unit,
-          unit_cost: unitCost,
+          unit_cost: effectiveUnitCost,
+          pieces_per_pack: parsed.pieces_per_pack ?? null,
         })
         .select("id, name")
         .single();
@@ -1161,11 +1616,11 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       productId = createdProduct.id;
       productName = createdProduct.name;
 
-      if (qty > 0) {
+      if (actualQty > 0) {
         await supabase.from("stock_movements").insert({
           tenant_id: tenant.id,
           product_id: productId,
-          change_qty: qty,
+          change_qty: actualQty,
           type: "in",
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           reason: "Initial stock via WhatsApp",
@@ -1173,36 +1628,40 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         });
       }
     } else if (productId) {
-      if (qty > 0) {
+      if (actualQty > 0) {
         await updateProductStock({
           supabase,
           tenantId: tenant.id,
           productId,
-          changeQty: qty,
+          changeQty: actualQty,
           type: "in",
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linkedMessageId: waMsg.id,
           alertPhone: fromPhone,
-          reason: "Restocked via WhatsApp",
+          reason: isBulk && packSize ? `Restocked ${qty} ${unit} (${actualQty} pcs)` : "Restocked via WhatsApp",
         });
       }
-      if (unitCost != null) {
+      if (effectiveUnitCost != null) {
         await supabase
           .from("products")
-          .update({ unit_cost: unitCost })
+          .update({ unit_cost: effectiveUnitCost })
           .eq("id", productId);
       }
     }
 
     let ledgerId: number | null = null;
     if (totalAmount && totalAmount > 0) {
+      const desc = (isBulk && packSize)
+        ? `Inventory restock: ${qty} ${unit} (${actualQty} pcs) of ${productName}`
+        : `Inventory restock: ${actualQty} ${unit} of ${productName}`;
+
       const { data: ledger } = await supabase
         .from("ledger_entries")
         .insert({
           tenant_id: tenant.id,
           type: "expense",
           amount: totalAmount,
-          item_description: `Inventory restock: ${qty} ${unit} of ${productName}`,
+          item_description: desc,
           product_id: productId,
           payment_method: parsed.payment_method ?? null,
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
@@ -1223,9 +1682,10 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       })
       .eq("id", waMsg.id);
 
-    let reply = `📦 *Stock Added:* +${qty} ${unit} of *${productName}*.`;
+    const packNote = (isBulk && packSize) ? ` (${qty} ${unit} × ${packSize} pcs)` : "";
+    let reply = `📦 *Stock Added:* +${actualQty} ${prodInfo?.unit || unit} of *${productName}*${packNote}.`;
     if (totalAmount && totalAmount > 0) {
-      reply += ` Recorded purchase cost of *${nf.format(totalAmount)}*.`;
+      reply += ` Recorded purchase cost of *${nf.format(totalAmount)}* (${nf.format(effectiveUnitCost ?? 0)}/pc).`;
     }
 
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
@@ -1326,12 +1786,28 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .select("id")
       .single();
 
-    if (productId && qty > 0) {
+    // Check if product is service or bulk pack
+    let qtyToDeduct = qty;
+    let isProdService = false;
+    if (productId) {
+      const { data: prodInfo } = await supabase
+        .from("products")
+        .select("is_service, pieces_per_pack, unit")
+        .eq("id", productId)
+        .maybeSingle();
+
+      isProdService = Boolean(prodInfo?.is_service);
+      if (prodInfo?.pieces_per_pack && BULK_UNITS.includes(unit.toLowerCase().trim())) {
+        qtyToDeduct = qty * Number(prodInfo.pieces_per_pack);
+      }
+    }
+
+    if (productId && qtyToDeduct > 0 && !isProdService) {
       await updateProductStock({
         supabase,
         tenantId: tenant.id,
         productId,
-        changeQty: -qty,
+        changeQty: -qtyToDeduct,
         type: "out",
         source: isVoice ? "whatsapp_voice" : "whatsapp_text",
         linkedMessageId: waMsg.id,
@@ -1350,9 +1826,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     const receiptUrl = ledger?.id ? getReceiptUrl(ledger.id) : null;
     const viaTag = method ? ` via ${method.toUpperCase()}` : "";
+    const bulkNote = (qtyToDeduct !== qty) ? ` (${qtyToDeduct} pcs)` : "";
     let reply = custName
-      ? `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*) to *${custName}*${viaTag}.`
-      : `Got it! Sold ${qty} ${unit} of *${productName ?? "item"}* (*${nf.format(amount)}*)${viaTag}.`;
+      ? isProdService
+        ? `Got it! Recorded *${productName ?? "service"}* (*${nf.format(amount)}*) for *${custName}*${viaTag}.`
+        : `Got it! Sold ${qty} ${unit}${bulkNote} of *${productName ?? "item"}* (*${nf.format(amount)}*) to *${custName}*${viaTag}.`
+      : isProdService
+      ? `Got it! Recorded *${productName ?? "service"}* (*${nf.format(amount)}*)${viaTag}.`
+      : `Got it! Sold ${qty} ${unit}${bulkNote} of *${productName ?? "item"}* (*${nf.format(amount)}*)${viaTag}.`;
 
     if (receiptUrl) {
       reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;

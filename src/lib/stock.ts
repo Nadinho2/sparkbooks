@@ -45,6 +45,17 @@ export async function updateProductStock(
     alertPhone,
   } = params;
 
+  // 0. Skip stock adjustments for service items (no physical inventory)
+  const { data: prodCheck } = await supabase
+    .from("products")
+    .select("is_service")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (prodCheck?.is_service) {
+    return null;
+  }
+
   // 1. Try atomic PostgreSQL RPC execution
   try {
     const { data, error } = await supabase.rpc("adjust_product_stock", {

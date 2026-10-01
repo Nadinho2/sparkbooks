@@ -12,6 +12,8 @@ export interface ProductInput {
   unit: string;
   unitCost?: number | null;
   reorderThreshold?: number | null;
+  isService?: boolean;
+  piecesPerPack?: number | null;
 }
 
 export interface TenantResult {
@@ -466,24 +468,30 @@ export async function createProducts(
   const { data: created, error } = await supabase
     .from("products")
     .insert(
-      products.map((p) => ({
-        tenant_id: tenantId,
-        name: p.name.trim(),
-        category_id: p.categoryId ?? null,
-        quantity: p.quantity,
-        unit: p.unit,
-        unit_cost: p.unitCost ?? null,
-        reorder_threshold:
-          p.reorderThreshold ?? Math.round(p.quantity * 0.2),
-      })),
+      products.map((p) => {
+        const isService = Boolean(p.isService);
+        return {
+          tenant_id: tenantId,
+          name: p.name.trim(),
+          category_id: p.categoryId ?? null,
+          quantity: isService ? 0 : p.quantity,
+          unit: p.unit,
+          unit_cost: p.unitCost ?? null,
+          reorder_threshold: isService
+            ? null
+            : (p.reorderThreshold ?? Math.round(p.quantity * 0.2)),
+          is_service: isService,
+          pieces_per_pack: isService ? null : (p.piecesPerPack ?? null),
+        };
+      }),
     )
-    .select("id, quantity");
+    .select("id, quantity, is_service");
 
   if (error) throw new Error(error.message);
 
   if (created) {
     const movements = created
-      .filter((p) => Number(p.quantity) > 0)
+      .filter((p) => !p.is_service && Number(p.quantity) > 0)
       .map((p) => ({
         tenant_id: tenantId,
         product_id: p.id,
