@@ -3,6 +3,9 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { ProductTable, type ProductRow, type Category } from "@/components/dashboard/ProductTable";
 import { parsePackagingUnits } from "@/lib/packaging";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function ProductsPage() {
   const tenant = await getCurrentTenant();
   const isOwner = await isTenantOwner();
@@ -117,7 +120,8 @@ export default async function ProductsPage() {
 
   // Build rows
   const rows: ProductRow[] = (products ?? []).map((p) => {
-    const catObj = (p.categories as unknown as { name: string }[])?.[0] ?? null;
+    const catRaw = p.categories as unknown;
+    const catObj = (Array.isArray(catRaw) ? catRaw[0] : catRaw) as { name: string } | null;
     const isService = Boolean(p.is_service);
     const piecesPerPack = p.pieces_per_pack != null ? Number(p.pieces_per_pack) : null;
     const quantity = Number(p.quantity);

@@ -100,7 +100,8 @@ export function BulkUploadModal({
         lower === "name" ||
         lower.includes("product") ||
         lower.includes("item") ||
-        lower.includes("title")
+        lower.includes("title") ||
+        lower.includes("description")
       ) {
         if (!Object.values(map).includes("name")) map[col] = "name";
       } else if (
@@ -113,19 +114,15 @@ export function BulkUploadModal({
         lower.includes("qty") ||
         lower.includes("quant") ||
         lower.includes("stock") ||
-        lower === "count"
+        lower === "count" ||
+        lower.includes("in stock")
       ) {
         if (!Object.values(map).includes("quantity")) map[col] = "quantity";
-      } else if (
-        lower.includes("unit") ||
-        lower.includes("measure") ||
-        lower.includes("pkg")
-      ) {
-        if (!Object.values(map).includes("unit")) map[col] = "unit";
       } else if (
         lower.includes("bulk") ||
         lower.includes("total cost") ||
         lower.includes("total price") ||
+        lower.includes("total amount") ||
         lower.includes("batch") ||
         lower.includes("carton cost") ||
         lower.includes("carton price")
@@ -135,14 +132,28 @@ export function BulkUploadModal({
           setPriceMode("bulk");
         }
       } else if (
+        lower.includes("unit cost") ||
+        lower.includes("unit price") ||
         lower.includes("cost") ||
         lower.includes("buying") ||
         lower.includes("purchase") ||
-        lower.includes("price")
+        lower.includes("price") ||
+        lower.includes("selling") ||
+        lower.includes("rate") ||
+        lower.includes("amount")
       ) {
         if (!Object.values(map).includes("unitCost") && !Object.values(map).includes("bulkCost")) {
           map[col] = "unitCost";
         }
+      } else if (
+        lower === "unit" ||
+        lower.includes("measure") ||
+        lower.includes("pkg") ||
+        lower.includes("uom") ||
+        lower.includes("packaging") ||
+        lower.includes("unit of measure")
+      ) {
+        if (!Object.values(map).includes("unit")) map[col] = "unit";
       } else if (
         lower.includes("alert") ||
         lower.includes("reorder") ||
@@ -153,7 +164,8 @@ export function BulkUploadModal({
       } else if (
         lower.includes("pack") ||
         lower.includes("pieces") ||
-        lower.includes("per pack")
+        lower.includes("per pack") ||
+        lower.includes("pack size")
       ) {
         if (!Object.values(map).includes("piecesPerPack")) map[col] = "piecesPerPack";
       }
@@ -273,15 +285,29 @@ export function BulkUploadModal({
       } else if (field === "unit") {
         item.unit = val;
       } else if (field === "unitCost") {
-        parsedUnitCost = parseFloat(val.replace(/,/g, "")) || null;
+        parsedUnitCost = parseFloat(val.replace(/[^0-9.]/g, "")) || null;
       } else if (field === "bulkCost") {
-        parsedBulkCost = parseFloat(val.replace(/,/g, "")) || null;
+        parsedBulkCost = parseFloat(val.replace(/[^0-9.]/g, "")) || null;
       } else if (field === "reorderThreshold") {
         item.reorderThreshold = parseFloat(val.replace(/,/g, "")) || null;
       } else if (field === "piecesPerPack") {
         item.piecesPerPack = parseInt(val.replace(/,/g, ""), 10) || null;
       }
     });
+
+    // Defensive fix: if unit was mapped to a price column or contains purely numeric values (e.g. "1700", "4000")
+    if (item.unit) {
+      const numericClean = item.unit.replace(/[₦,\s]/g, "");
+      if (/^\d+(\.\d+)?$/.test(numericClean)) {
+        const numVal = parseFloat(numericClean);
+        if (!isNaN(numVal) && numVal > 0) {
+          if (parsedUnitCost == null && parsedBulkCost == null) {
+            parsedUnitCost = numVal;
+          }
+        }
+        item.unit = "pcs";
+      }
+    }
 
     const qty = item.quantity || 0;
 
@@ -333,7 +359,8 @@ export function BulkUploadModal({
       if (!res.success) {
         setError(res.error || "Failed to import products.");
       } else {
-        onSuccess(res.imported);
+        const total = res.imported + (res.updated || 0);
+        onSuccess(total);
         onClose();
       }
     } catch (err: any) {

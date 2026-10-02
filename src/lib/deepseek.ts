@@ -33,6 +33,7 @@ export interface ParsedEntry {
     | "debt"
     | "debt_repayment"
     | "debt_check"
+    | "undo_last"
     | "help"
     | "magic_login"
     | "unclear";
@@ -89,7 +90,7 @@ ${catalogJson}
 
 Return ONLY valid JSON, no preamble, no markdown fences, matching this exact shape:
 {
-  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "stock_adjustment" | "update_pack_size" | "transaction_update" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "help" | "unclear",
+  "entry_type": "sale" | "expense" | "stock_in" | "stock_check" | "stock_adjustment" | "update_pack_size" | "transaction_update" | "daily_summary" | "weekly_summary" | "debt" | "debt_repayment" | "debt_check" | "undo_last" | "help" | "unclear",
   "matched_product_id": number | null,
   "matched_product_name": string | null,
   "is_new_product": boolean,
@@ -109,8 +110,8 @@ Return ONLY valid JSON, no preamble, no markdown fences, matching this exact sha
 
 Rules:
 1. ENTRY TYPES:
-   - "sale": A completed sale (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000 via OPay transfer", "Sold to Chioma 1 dress 30k cash", "Sewed Senator 30k for Emeka").
-     'amount' is the TOTAL revenue in Naira.
+   - "sale": A completed sale (e.g. "Sold 3 Bone Straight wig for 100k each", "Sold 2 wigs for 50,000 via OPay transfer", "Sold to Chioma 1 dress 30k cash", "Sewed Senator 30k for Emeka", "I sold one pack of small wool").
+     'amount' is the TOTAL revenue in Naira. If price is omitted or not stated, set amount=null.
      'customer_name' is the customer/buyer's name if mentioned (e.g. "Sold to Chioma 1 dress 30k" -> customer_name="Chioma", "Sold 1 wig to Sarah for 50k" -> customer_name="Sarah"). If no buyer is mentioned, customer_name=null.
    - "debt": A sale where the customer made a partial payment or bought on credit (e.g. "Sold 1 bone straight 100k to Blessing, she paid 60k balance 40k", "Sold 2 closure to Amaka for 50k on credit", "Gave Tunde 2 items for 30k, paid half 15k", "Sewed Agbada 50k for Chief Obi, paid 30k balance 20k").
      'amount' is the TOTAL sale value (e.g. 100000).
@@ -120,11 +121,11 @@ Rules:
    - "debt_repayment": Customer paying back an existing debt or balance (e.g. "Blessing paid her 40k balance", "Amaka paid 20k for the hair she was owing", "Received 15k balance from Tunde").
      'amount' is the amount paid back in Naira.
      'customer_name' is the customer who paid.
-   - "debt_check": Inquiries about customer debts/balances (e.g. "Who is owing me?", "Show my debtors", "How much is Blessing owing?", "Check unpaid debts").
+   - "debt_check": Inquiries about customer debts/balances (e.g. "Who is owing me?", "Who are the people owning me?", "How much debts are people owning me?", "Who dey owe me?", "Show my debtors", "How much is Blessing owing?", "Check unpaid debts", "Debtors list").
      'customer_name' can be set if asking about a specific person.
    - "expense": Operational or business expenses (e.g. "Paid shop rent 50,000", "Fuel 5k cash", "Transport 2000", "Dispatch rider 3k", "Generator fuel 5000", "Bought 5 rolls of thread and 20 zips 12k").
      For general expenses, set matched_product_id=null, matched_product_name="Shop rent" (or expense title), amount=amount.
-   - "stock_in": Adding or restocking inventory (e.g. "I have restocked 2*6 closure 50 pcs at cost price of 20k each", "Restocked 10 Bone Straight", "Restocked 2 cartons Lush Attachment 50k", "Restocked 2 cartons Lush, 40 per carton 50k").
+   - "stock_in": Adding or restocking inventory (e.g. "I have restocked 2*6 closure 50 pcs at cost price of 20k each", "Restocked 10 Bone Straight", "Restocked 2 cartons Lush Attachment 50k", "Restocked 2 cartons Lush, 40 per carton 50k", "I bought 24 packs of Wool hair attachment for 36000").
      'quantity' is the number of units/cartons added.
      'unit_cost' is the unit purchase cost in Naira.
      'amount' is total purchase cost.
@@ -135,14 +136,12 @@ Rules:
    - "update_pack_size": Explicitly updating the pack size (pieces per carton/pack) for a product (e.g. "Lush attachment is 40 pcs per carton", or user replying "Update" or "Update pack size" to an assistant question).
      'matched_product_id' and 'matched_product_name' set to the product.
      'pieces_per_pack' is the pieces per carton/pack (e.g. 40).
-   - "transaction_update": Attaching purchase cost, payment method, customer, or missing details to a transaction ALREADY confirmed in the recent conversation thread (e.g. Assistant just recorded a restock, and user follows up with: "Currently the cartons are 50,000 per carton", "It was restock at 50k per carton", "The recorded 3 cartons of lash attachments was 50k each", or "Paid via transfer").
-     DO NOT add stock again! Set entry_type="transaction_update".
+   - "transaction_update": Updating or correcting details on a transaction ALREADY logged in the recent conversation (e.g. "This was sold for 4000", "I sold it for 4000", "The one you recorded for 0 naira was actually sold for 4000", "It was restock at 50k per carton", "The recorded 3 cartons was 50k each", or "Paid via transfer").
+     DO NOT add stock or log a new sale again! Set entry_type="transaction_update".
      'matched_product_id' and 'matched_product_name' set to the product.
-     'quantity' is the number of cartons or items from that transaction.
-     'unit' is the unit (e.g. "cartons").
-     'unit_cost' is cost per unit/carton.
-     'amount' is the total cost.
-   - "stock_check": Inquiries about inventory levels (e.g. "How many Bone Straight left?", "Check stock", "How many closure do I have?", "What is my inventory").
+     'amount' is the updated amount/cost.
+   - "undo_last": User expressing that the previous transaction or message was incorrect, a mistake, or wants to cancel/undo it (e.g. "This is not correct", "That is wrong", "Undo", "Cancel that", "Delete last", "Remove the last one", "Cancel the last entry", "I made a mistake"). Set confidence=1.0.
+   - "stock_check": Inquiries about inventory levels (e.g. "What do I have in my stock?", "What is my inventory?", "How many Bone Straight left?", "Check stock", "Show stock", "View inventory", "How many closure do I have?", "Wetin remain for stock").
    - "daily_summary": Inquiries about today's sales/profit/closing (e.g. "How much did I sell today?", "Today's summary", "Sales report", "Close today", "Daily closing").
    - "weekly_summary": Inquiries about this week's numbers (e.g. "Weekly sales", "How much this week?", "Weekly report").
    - "help": Greetings or instructions (e.g. "Help", "Hi", "Hello", "How does this work?").
@@ -188,7 +187,13 @@ Rules:
      b) ATTACHING COST TO AN EARLIER RECORDED RESTOCK:
         - If the assistant just confirmed a restock (e.g. "Stock Added: +120 of lush attachment (3 cartons x 40 pcs)"), and the user follows up with cost details (e.g. "It was restock at 50k per carton", "The recorded 3 cartons at 50k"):
           Classify as "transaction_update" so the system updates the purchase cost on the existing transaction rather than restocking another 120 pieces!
-     c) PRONOUNS AND REFERENCES: Words like "it", "that", "the recorded 3 cartons" refer to the product and transaction in the recent messages.`;
+     c) ATTACHING MISSING PRICE OR CORRECTING A SALE:
+        - If the assistant just recorded a sale (or sale was ₦0), and user follows up with price details (e.g. "This was sold for 4000", "I sold it for 4000", "The price is 4k", "I mean 4000"):
+          Classify as "transaction_update" with amount=4000 so the system updates the sale price rather than recording an expense or duplicate sale!
+     d) UNDO / CANCELLATION:
+        - If the user says "This is not correct", "That is wrong", "Undo", "Cancel that", "Delete last", "I made a mistake":
+          Classify as "undo_last"!
+     e) PRONOUNS AND REFERENCES: Words like "it", "that", "the one recorded", "the recorded 3 cartons" refer to the product and transaction in the recent messages.`;
 }
 
 /**

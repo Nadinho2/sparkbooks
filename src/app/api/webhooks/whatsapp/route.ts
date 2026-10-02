@@ -21,6 +21,10 @@ import {
   formatStockBreakdown,
   normalizeUnitName,
 } from "@/lib/packaging";
+import {
+  findBestCatalogMatches,
+  parseNewProductCatalogingReply,
+} from "@/lib/tenant";
 
 /**
  * GET — WhatsApp webhook verification.
@@ -89,15 +93,15 @@ const BULK_UNITS = [
  */
 function detectFastIntent(
   text: string,
-): "debt_check" | "daily_summary" | "weekly_summary" | "stock_check" | "help" | "magic_login" | null {
+): "debt_check" | "daily_summary" | "weekly_summary" | "stock_check" | "help" | "magic_login" | "undo_last" | null {
   const t = text.trim().toLowerCase().replace(/[?!.,]/g, "").replace(/\s+/g, " ");
 
-  // 1. Debt check: "who is owing me", "who dey owe me", "who owe me", "who is owing", "who dey owe",
+  // 1. Debt check: "who is owing me", "who is owning me", "who dey owe me", "who dey own me", "who owe me",
   // "debtors", "debtors list", "check debtors", "show debtors", "show my debtors", "my debtors", "debts",
-  // "anybody owing me", "list of debtors", "list debtors", "who owe", "who is owing me money"
+  // "anybody owing me", "anybody owning me", "people owing me", "people owning me", "how much debts are people owning me"
   if (
-    /^(who\s+(?:is\s+owing|dey\s+owe|owe)\s*(?:me(?:\s+money)?)?|who\s+dey\s+owe|debtors?|debtors?\s+list|show\s+(?:me\s+)?debtors?|check\s+debts?|unpaid\s+debts?|anybody\s+owing(?:\s+me)?|list\s+of\s+debtors|customer\s+debts?)$/i.test(t) ||
-    /^(who\s+(?:is\s+owing|dey\s+owe|owe)\s*me)/i.test(t) ||
+    /(who\s+(?:is\s+)?(?:owing|owning|dey\s+owe|owe|dey\s+own)\s*(?:me(?:\s+money)?)?|debtors?|debtors?\s+list|show\s+(?:me\s+)?debtors?|check\s+debts?|unpaid\s+debts?|anybody\s+(?:owing|owning)(?:\s+me)?|list\s+of\s+debtors|customer\s+debts?|who\s+dey\s+owe|who\s+dey\s+own|people\s+(?:owing|owning)\s*me|debts\s+are\s+people\s+(?:owing|owning))/i.test(t) ||
+    /^(who\s+(?:is\s+)?(?:owing|owning|dey\s+owe|owe)\s*me)/i.test(t) ||
     /^(show|check|get|list)\s+(?:all\s+)?(?:my\s+)?debtors/i.test(t)
   ) {
     return "debt_check";
@@ -117,9 +121,11 @@ function detectFastIntent(
     return "weekly_summary";
   }
 
-  // 4. Stock check: "check stock", "stock list", "all stock", "show stock", "view stock"
+  // 4. Stock check: "check stock", "stock list", "all stock", "show stock", "view stock", "what do i have in my stock", "what is my inventory"
   if (
-    /^(check\s+stock|stock\s+list|all\s+stock|show\s+stock|view\s+stock|inventory\s+list|how\s+many\s+stock)$/i.test(t)
+    /^(check\s+stock|stock\s+list|all\s+stock|show\s+stock|view\s+stock|inventory\s+list|how\s+many\s+stock|what\s+(?:do\s+i\s+have\s+in\s+)?(?:my\s+)?stock|what\s+is\s+my\s+inventory|my\s+stock|check\s+inventory|view\s+inventory|show\s+inventory|wetin\s+(?:remain|i\s+get)\s+(?:for\s+stock)?)$/i.test(t) ||
+    /what\s+(?:do\s+i\s+have\s+in\s+)?(?:my\s+)?stock/i.test(t) ||
+    /what\s+is\s+my\s+inventory/i.test(t)
   ) {
     return "stock_check";
   }
@@ -134,6 +140,14 @@ function detectFastIntent(
     /^(login|log in|dashboard|portal|web dashboard|my dashboard|open dashboard|view dashboard|sign in|website)$/i.test(t)
   ) {
     return "magic_login";
+  }
+
+  // 7. Undo / Mistake / Cancellation: "this is not correct", "that is wrong", "undo", "cancel last", "delete last", "mistake", "cancel that", "wrong"
+  if (
+    /^(this\s+is\s+not\s+correct|that(?:'s|\s+is)\s+wrong|not\s+correct|wrong|undo|cancel\s+last|delete\s+last|mistake|cancel\s+that|remove\s+last|error)$/i.test(t) ||
+    /^(this\s+is\s+not\s+correct|that\s+is\s+wrong|undo\s+last|cancel\s+last)/i.test(t)
+  ) {
+    return "undo_last";
   }
 
   return null;
@@ -154,7 +168,7 @@ function parsePackClarificationReply(
 
   const clean = text.trim();
 
-  // 1. Look for cost with 'k' (e.g. 50k, 25k each)
+  // 1. Look for cost with 'k' (e.g. 50k, 25k each, for 36k)
   const kMatch = clean.match(/(?:cost|bought|at|for|total|price)?\s*(?:₦|ngn)?\s*(\d+(?:\.\d+)?)\s*k\b/i);
   if (kMatch) {
     const val = parseFloat(kMatch[1]) * 1000;
@@ -165,26 +179,78 @@ function parsePackClarificationReply(
     }
   }
 
-  // 2. Look for currency sign ₦ or NGN or price with comma (e.g. ₦50,000 or 50,000)
+  // 2. Look for currency sign ₦ or NGN or price with comma or explicit "for 36000"
   if (!kMatch) {
+    const forPriceMatch = clean.match(/(?:for|at|cost|price|total)\s*(?:₦|ngn)?\s*(\d[\d,]*(?:\.\d+)?)/i);
     const nairaMatch = clean.match(/(?:₦|ngn)\s*(\d[\d,]*(?:\.\d+)?)/i);
-    if (nairaMatch) {
-      const val = parseFloat(nairaMatch[1].replace(/,/g, ""));
-      if (/each|per\s+(?:carton|pack|box|bundle|crate|roll|bag)/i.test(clean)) {
-        totalCost = val * rawQty;
-      } else {
-        totalCost = val;
+    const priceTarget = forPriceMatch || nairaMatch;
+    if (priceTarget) {
+      const val = parseFloat(priceTarget[1].replace(/,/g, ""));
+      if (val >= 100) {
+        if (/each|per\s+(?:carton|pack|box|bundle|crate|roll|bag)/i.test(clean)) {
+          totalCost = val * rawQty;
+        } else {
+          totalCost = val;
+        }
       }
     }
   }
 
-  // 3. Look for explicit pieces indicator: e.g. "40 pcs", "40 pieces", "40 per carton"
-  const pcsMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:pcs|pieces|piece|pk|items|units|per\s+(?:carton|pack|box))/i);
-  if (pcsMatch) {
-    packSize = parseFloat(pcsMatch[1]);
+  // 3. Nigerian market quantity units: "dozen", "dozens", "gross", "half dozen"
+  const dozenMatch = clean.match(/(\d+(?:\.\d+)?)\s*dozens?\b/i);
+  const halfDozenMatch = /\bhalf\s*dozen\b/i.test(clean);
+  const grossMatch = clean.match(/(\d+(?:\.\d+)?)\s*gross\b/i);
+
+  if (halfDozenMatch) {
+    packSize = 6;
+  } else if (dozenMatch) {
+    const dozCount = parseFloat(dozenMatch[1]);
+    const totalDozPcs = dozCount * 12;
+
+    // Check if the user is stating total quantity or per-pack size:
+    // e.g. user bought 24 packs, and says "It is 2 dozens for 36000":
+    // 2 dozens = 24 items. That means the 24 packs ARE the 24 pieces (1 pack = 1 pc retail unit)!
+    if (rawQty > 0 && Math.abs(totalDozPcs - rawQty) <= 1) {
+      packSize = 1;
+    } else if (rawQty > 0 && totalDozPcs > rawQty && totalDozPcs % rawQty === 0) {
+      // e.g. bought 2 cartons, says "2 dozens" (24 pcs) -> 24 / 2 = 12 pcs per carton
+      packSize = Math.round(totalDozPcs / rawQty);
+    } else if (/per\s+(?:pack|carton)|in\s+(?:a\s+pack|1\s+pack|a\s+carton|1\s+carton)/i.test(clean)) {
+      packSize = totalDozPcs;
+    } else if (rawQty === 1) {
+      packSize = totalDozPcs;
+    } else {
+      packSize = 12;
+    }
+  } else if (grossMatch) {
+    const grossCount = parseFloat(grossMatch[1]);
+    const totalGrossPcs = grossCount * 144;
+    if (rawQty > 0 && Math.abs(totalGrossPcs - rawQty) <= 1) {
+      packSize = 1;
+    } else if (rawQty > 0 && totalGrossPcs > rawQty && totalGrossPcs % rawQty === 0) {
+      packSize = Math.round(totalGrossPcs / rawQty);
+    } else {
+      packSize = 144;
+    }
   }
 
-  // 4. Inspect numeric tokens in the string for packSize or cost
+  // 4. Look for expressions like "10packs is 10" or "pack is 12" or "1 carton has 40"
+  if (!packSize) {
+    const relationMatch = clean.match(/\b(?:\d+\s*packs?\s*(?:is|=|has)|pack\s*(?:is|=|has)|carton\s*(?:is|=|has))\s*(\d+)\b/i);
+    if (relationMatch) {
+      packSize = parseFloat(relationMatch[1]);
+    }
+  }
+
+  // 5. Look for explicit pieces indicator: e.g. "40 pcs", "40 pieces", "40 per carton"
+  if (!packSize) {
+    const pcsMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:pcs|pieces|piece|pk|items|units|per\s+(?:carton|pack|box))/i);
+    if (pcsMatch) {
+      packSize = parseFloat(pcsMatch[1]);
+    }
+  }
+
+  // 6. Inspect remaining numeric tokens in the string for packSize or cost
   const allNums = clean.match(/\b\d[\d,]*(?:\.\d+)?\b/g);
   if (allNums) {
     for (const numStr of allNums) {
@@ -203,6 +269,8 @@ function parsePackClarificationReply(
           totalCost = val;
         }
       } else if (!packSize && val > 0 && val < 5000) {
+        // If the number matches the word "dozens", don't set raw dozen count as piece count
+        if (clean.toLowerCase().includes("dozen")) continue;
         packSize = val;
       }
     }
@@ -646,30 +714,45 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
   // ── 4b. CHECK FOR PENDING INTERACTIVE REPLIES (e.g. Pack Size Clarification) ──
   try {
-    const { data: pendingPackMsg } = await supabase
+    let pendingQuery = supabase
       .from("whatsapp_messages")
-      .select("id, metadata")
+      .select("id, metadata, created_at, sender_member_id")
       .eq("tenant_id", tenant.id)
       .eq("status", "pending_confirmation")
       .not("metadata->pending_action", "is", null)
+      .gte("created_at", new Date(Date.now() - 20 * 60 * 1000).toISOString())
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+
+    if (senderMemberId) {
+      pendingQuery = pendingQuery.or(`sender_member_id.eq.${senderMemberId},sender_member_id.is.null`);
+    }
+
+    const { data: pendingPackMsg } = await pendingQuery.maybeSingle();
 
     if (pendingPackMsg && pendingPackMsg.metadata) {
       const meta = pendingPackMsg.metadata as {
         pending_action?: string;
         product_id?: number | null;
         product_name?: string;
+        candidate_id?: number | null;
+        candidate_name?: string;
+        raw_product_name?: string;
         raw_qty?: number;
         unit?: string;
         unit_cost?: number | null;
         amount?: number | null;
+        payment_method?: "transfer" | "cash" | "pos" | "other" | null;
+        customer_name?: string | null;
+        is_new_product?: boolean;
+        is_credit_sale?: boolean;
+        amount_paid?: number | null;
+        amount_owed?: number | null;
       };
 
       if (meta.pending_action === "pack_size_clarification" && (meta.product_id || meta.product_name) && meta.raw_qty) {
         // User wants to cancel
-        if (rawText && /^(cancel|nevermind|abort|stop|no)$/i.test(rawText.trim())) {
+        if (rawText && /^(cancel|nevermind|abort|stop|leave it|forget it|undo|don't record|dont record|cancel (?:sale|restock))\b/i.test(rawText.trim())) {
           await supabase
             .from("whatsapp_messages")
             .update({ status: "failed" })
@@ -813,6 +896,615 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           return;
         }
       }
+
+      // Handle missing sale price clarification
+      if (meta.pending_action === "sale_price_clarification" && (meta.product_id || meta.product_name)) {
+        if (rawText && /^(cancel|nevermind|abort|stop|leave it|forget it|undo|don't record|dont record|cancel (?:sale|restock))\b/i.test(rawText.trim())) {
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "failed" })
+            .eq("id", pendingPackMsg.id);
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "matched" })
+            .eq("id", waMsg.id);
+          await replyToUser(supabase, tenant.id, fromPhone, "Sale cancelled.", senderMemberId);
+          return;
+        }
+
+        const cleanReply = (rawText || "").trim();
+        let saleAmount: number | null = null;
+        let detectedMethod: "transfer" | "cash" | "pos" | null = null;
+
+        if (/transfer|opay|moniepoint|kuda|bank/i.test(cleanReply)) detectedMethod = "transfer";
+        else if (/cash/i.test(cleanReply)) detectedMethod = "cash";
+        else if (/pos|card/i.test(cleanReply)) detectedMethod = "pos";
+
+        const kMatch = cleanReply.match(/(?:₦|ngn)?\s*(\d+(?:\.\d+)?)\s*k\b/i);
+        if (kMatch) {
+          saleAmount = parseFloat(kMatch[1]) * 1000;
+        } else {
+          const numMatch = cleanReply.match(/(?:₦|ngn)?\s*(\d[\d,]*(?:\.\d+)?)/i);
+          if (numMatch) {
+            saleAmount = parseFloat(numMatch[1].replace(/,/g, ""));
+          }
+        }
+
+        if (saleAmount && saleAmount > 0) {
+          let targetProductId = meta.product_id ?? null;
+          let targetProductName = meta.product_name || "New Item";
+          const qty = meta.raw_qty ?? 1;
+          const unit = meta.unit ?? "pcs";
+          const method = detectedMethod || meta.payment_method || null;
+          const methodTag = method ? ` (${method.toUpperCase()})` : "";
+
+          if (!targetProductId && targetProductName) {
+            const { data: catList } = await supabase
+              .from("products")
+              .select("id, name, unit, unit_cost, quantity, is_service")
+              .eq("tenant_id", tenant.id)
+              .is("deleted_at", null);
+
+            const catCandidates = (catList ?? []).map((c) => ({
+              id: c.id,
+              name: c.name,
+              quantity: Number(c.quantity ?? 0),
+              unit: c.unit,
+              unit_cost: c.unit_cost,
+              is_service: c.is_service,
+            }));
+
+            const matchResult = findBestCatalogMatches(targetProductName, catCandidates);
+
+            if (matchResult.exactMatch) {
+              targetProductId = matchResult.exactMatch.id;
+              targetProductName = matchResult.exactMatch.name;
+            } else if (matchResult.fuzzyCandidates.length > 0) {
+              const topCandidate = matchResult.fuzzyCandidates[0].item;
+              await supabase
+                .from("whatsapp_messages")
+                .update({
+                  metadata: {
+                    ...meta,
+                    pending_action: "fuzzy_product_clarification",
+                    candidate_id: topCandidate.id,
+                    candidate_name: topCandidate.name,
+                    raw_product_name: targetProductName,
+                    amount: saleAmount,
+                    payment_method: method,
+                  },
+                })
+                .eq("id", pendingPackMsg.id);
+
+              await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+
+              const stockStr = `${topCandidate.quantity} ${topCandidate.unit} in stock`;
+              const reply =
+                `Got it, *${nf.format(saleAmount)}*! 💰\n\n` +
+                `🔍 I couldn't find *"${targetProductName}"*, but found *${topCandidate.name}* in your catalog (${stockStr}).\n\n` +
+                `Did you mean *${topCandidate.name}*?\n` +
+                `1️⃣ *Yes* — Record sale & deduct stock\n` +
+                `2️⃣ *No* — This is a new product\n\n` +
+                `_(Reply **1** or **2**)_`;
+
+              await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+              return;
+            } else {
+              await supabase
+                .from("whatsapp_messages")
+                .update({
+                  metadata: {
+                    ...meta,
+                    pending_action: "new_product_cataloging",
+                    product_name: targetProductName,
+                    amount: saleAmount,
+                    payment_method: method,
+                  },
+                })
+                .eq("id", pendingPackMsg.id);
+
+              await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+
+              const reply =
+                `Got it, *${nf.format(saleAmount)}*! 💰\n\n` +
+                `⚠️ *"${targetProductName}"* is not in your product catalog yet!\n\n` +
+                `To track your stock and calculate your profit on this sale, let's add it quickly:\n\n` +
+                `📦 *How many do you have in stock, and what did you buy each?*\n` +
+                `_(Reply e.g.: **"12 in stock, cost 6000"**)_\n\n` +
+                `💡 _Or reply **SKIP** to record without stock tracking._`;
+
+              await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+              return;
+            }
+          }
+
+          let qtyToDeduct = qty;
+          let isProdService = false;
+          let prodBaseUnit = "pcs";
+
+          if (targetProductId) {
+            const { data: prodInfo } = await supabase
+              .from("products")
+              .select("is_service, pieces_per_pack, packaging_units, unit")
+              .eq("id", targetProductId)
+              .maybeSingle();
+
+            isProdService = Boolean(prodInfo?.is_service);
+            prodBaseUnit = prodInfo?.unit || "pcs";
+            const pkgUnits = parsePackagingUnits(prodInfo?.packaging_units, prodInfo?.pieces_per_pack != null ? Number(prodInfo.pieces_per_pack) : null);
+            const mult = resolveUnitMultiplier(unit, pkgUnits, prodInfo?.unit || "pcs", prodInfo?.pieces_per_pack).multiplier;
+            qtyToDeduct = qty * mult;
+
+            if (qtyToDeduct > 0 && !isProdService) {
+              await updateProductStock({
+                supabase,
+                tenantId: tenant.id,
+                productId: targetProductId,
+                changeQty: -qtyToDeduct,
+                type: "out",
+                source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+                linkedMessageId: waMsg.id,
+                alertPhone: fromPhone,
+                reason: `Sale of ${qty} ${unit} via WhatsApp`,
+              });
+            }
+          }
+
+          const desc = (meta as any).customer_name
+            ? `Sold ${qty} ${unit} of ${targetProductName} to ${(meta as any).customer_name}`
+            : `Sold ${qty} ${unit} of ${targetProductName}`;
+
+          const { data: ledger } = await supabase
+            .from("ledger_entries")
+            .insert({
+              tenant_id: tenant.id,
+              type: "sale",
+              amount: saleAmount,
+              item_description: desc,
+              product_id: targetProductId,
+              payment_method: method,
+              customer_name: (meta as any).customer_name || null,
+              source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+              linked_message_id: waMsg.id,
+              confidence_score: 1.0,
+            })
+            .select("id")
+            .single();
+
+          const ledgerId = ledger?.id ?? null;
+
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "matched", linked_entry_id: ledgerId })
+            .eq("id", pendingPackMsg.id);
+
+          await supabase
+            .from("whatsapp_messages")
+            .update({ status: "matched", linked_entry_id: ledgerId })
+            .eq("id", waMsg.id);
+
+          const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+          const unitBreakdown = qtyToDeduct !== qty ? ` (${qtyToDeduct} ${prodBaseUnit})` : "";
+          const custNote = (meta as any).customer_name ? ` to *${(meta as any).customer_name}*` : "";
+
+          let reply = `Got it! Sold ${qty} ${unit}${unitBreakdown} of *${targetProductName}* (*${nf.format(saleAmount)}*)${custNote}${methodTag}.`;
+          if (receiptUrl) {
+            reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;
+          }
+
+          await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+          return;
+        }
+      }
+
+      // ── Handle Spelling / Fuzzy Product Clarification ("Did you mean...?") ──
+      if (meta.pending_action === "fuzzy_product_clarification" && meta.candidate_id) {
+        if (rawText && /^(cancel|nevermind|abort|stop|leave it|forget it|undo|don't record|dont record|cancel sale)\b/i.test(rawText.trim())) {
+          await supabase.from("whatsapp_messages").update({ status: "failed" }).eq("id", pendingPackMsg.id);
+          await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+          await replyToUser(supabase, tenant.id, fromPhone, "Sale cancelled.", senderMemberId);
+          return;
+        }
+
+        const replyTrim = (rawText || "").trim().toLowerCase();
+        const isConfirmMatch =
+          /^(1|yes|y|yeah|yep|correct|sure|ok|confirm|true)\b/i.test(replyTrim) ||
+          /\b(option 1|that's it|thats it)\b/i.test(replyTrim);
+        const isRejectMatch =
+          /^(2|no|n|new|nope|neither|different|false)\b/i.test(replyTrim) ||
+          /\b(option 2|new product|new item|neither|different product|not that)\b/i.test(replyTrim);
+
+        if (isConfirmMatch) {
+          const targetProductId = meta.candidate_id;
+          let targetProductName = meta.candidate_name || "item";
+          const qty = meta.raw_qty ?? 1;
+          const unit = meta.unit ?? "pcs";
+          const saleAmount = meta.amount ?? 0;
+          const method = meta.payment_method ?? null;
+          const methodTag = method ? ` (${method.toUpperCase()})` : "";
+          const isCredit = Boolean(meta.is_credit_sale);
+
+          let qtyToDeduct = qty;
+          let isProdService = false;
+          let prodBaseUnit = "pcs";
+
+          const { data: prodInfo } = await supabase
+            .from("products")
+            .select("name, unit, unit_cost, quantity, is_service, pieces_per_pack, packaging_units")
+            .eq("id", targetProductId)
+            .maybeSingle();
+
+          if (prodInfo) {
+            targetProductName = prodInfo.name;
+            isProdService = Boolean(prodInfo.is_service);
+            prodBaseUnit = prodInfo.unit || "pcs";
+            const pkgUnits = parsePackagingUnits(prodInfo.packaging_units, prodInfo.pieces_per_pack != null ? Number(prodInfo.pieces_per_pack) : null);
+            const mult = resolveUnitMultiplier(unit, pkgUnits, prodInfo.unit || "pcs", prodInfo.pieces_per_pack).multiplier;
+            qtyToDeduct = qty * mult;
+
+            if (qtyToDeduct > 0 && !isProdService) {
+              await updateProductStock({
+                supabase,
+                tenantId: tenant.id,
+                productId: targetProductId,
+                changeQty: -qtyToDeduct,
+                type: "out",
+                source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+                linkedMessageId: waMsg.id,
+                alertPhone: fromPhone,
+                reason: `Sale of ${qty} ${unit} via WhatsApp (confirmed spelling)`,
+              });
+            }
+          }
+
+          const desc = meta.customer_name
+            ? `Sold ${qty} ${unit} of ${targetProductName} to ${meta.customer_name}`
+            : `Sold ${qty} ${unit} of ${targetProductName}`;
+
+          const { data: ledger } = await supabase
+            .from("ledger_entries")
+            .insert({
+              tenant_id: tenant.id,
+              type: "sale",
+              amount: saleAmount,
+              item_description: desc,
+              product_id: targetProductId,
+              payment_method: method,
+              customer_name: meta.customer_name || null,
+              source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+              linked_message_id: waMsg.id,
+              confidence_score: 1.0,
+            })
+            .select("id")
+            .single();
+
+          const ledgerId = ledger?.id ?? null;
+
+          if (isCredit) {
+            try {
+              const amountPaid = meta.amount_paid ?? 0;
+              const amountOwed = meta.amount_owed ?? Math.max(0, saleAmount - amountPaid);
+              await supabase.from("customer_debts").insert({
+                tenant_id: tenant.id,
+                customer_name: meta.customer_name || "Customer",
+                linked_entry_id: ledgerId,
+                total_amount: saleAmount,
+                amount_paid: amountPaid,
+                amount_owed: amountOwed,
+                status: amountOwed === 0 ? "settled" : amountPaid > 0 ? "partially_paid" : "unpaid",
+                notes: `${qty} ${unit} of ${targetProductName}`,
+              });
+            } catch (err) {
+              console.error("Failed to insert customer debt:", err);
+            }
+          }
+
+          await supabase.from("whatsapp_messages").update({ status: "matched", linked_entry_id: ledgerId }).eq("id", pendingPackMsg.id);
+          await supabase.from("whatsapp_messages").update({ status: "matched", linked_entry_id: ledgerId }).eq("id", waMsg.id);
+
+          const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+          const newStock = prodInfo && !isProdService ? Number(prodInfo.quantity) - qtyToDeduct : null;
+          const stockNote = newStock != null ? ` (${newStock} ${prodBaseUnit} remaining in stock)` : "";
+          const custNote = meta.customer_name ? ` to *${meta.customer_name}*` : "";
+
+          let reply = `✅ *Sale Recorded for ${targetProductName}!*${custNote}\n• Quantity: *${qty} ${unit}*${stockNote}\n• Amount: *${nf.format(saleAmount)}*${methodTag}`;
+          if (isCredit) {
+            const amountPaid = meta.amount_paid ?? 0;
+            const amountOwed = meta.amount_owed ?? Math.max(0, saleAmount - amountPaid);
+            reply += `\n• 👤 Customer Debt: *${meta.customer_name || "Customer"}* owes *${nf.format(amountOwed)}* (Paid: ${nf.format(amountPaid)})`;
+          }
+          if (receiptUrl) {
+            reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;
+          }
+
+          await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+          return;
+        }
+
+        if (isRejectMatch) {
+          const rawName = meta.raw_product_name || "item";
+          await supabase
+            .from("whatsapp_messages")
+            .update({
+              metadata: {
+                ...meta,
+                pending_action: "new_product_cataloging",
+                product_name: rawName,
+              },
+            })
+            .eq("id", pendingPackMsg.id);
+
+          await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+
+          const prompt =
+            `Got it, *"${rawName}"* is a new product! 👍\n\n` +
+            `📦 *How many do you have in stock, and what did you buy each?*\n` +
+            `_(Reply e.g.: **"12 in stock, cost 6000"** or reply **SKIP** to record without stock tracking)_`;
+
+          await replyToUser(supabase, tenant.id, fromPhone, prompt, senderMemberId);
+          return;
+        }
+
+        // Neither 1 nor 2: check if user sent a new command or re-prompt
+        const hasNewIntent = Boolean(detectFastIntent(rawText || "") || /\b(sold|bought|restock|expense|paid|transfer|cash)\b/i.test(rawText || ""));
+        if (hasNewIntent) {
+          await supabase.from("whatsapp_messages").update({ status: "failed" }).eq("id", pendingPackMsg.id);
+        } else {
+          const candidateName = meta.candidate_name || "the item";
+          const rePrompt =
+            `Please reply:\n` +
+            `1️⃣ *Yes* — to confirm *${candidateName}*\n` +
+            `2️⃣ *No* — if this is a new product\n` +
+            `Or reply *CANCEL* to discard the sale.`;
+          await replyToUser(supabase, tenant.id, fromPhone, rePrompt, senderMemberId);
+          return;
+        }
+      }
+
+      // ── Handle New Product Fast WhatsApp Cataloging ──
+      if (meta.pending_action === "new_product_cataloging" && meta.product_name) {
+        const parsedReply = parseNewProductCatalogingReply(rawText || "");
+
+        if (parsedReply.isCancel) {
+          await supabase.from("whatsapp_messages").update({ status: "failed" }).eq("id", pendingPackMsg.id);
+          await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+          await replyToUser(supabase, tenant.id, fromPhone, "Sale cancelled.", senderMemberId);
+          return;
+        }
+
+        if (parsedReply.isDisplacedTransaction) {
+          await supabase.from("whatsapp_messages").update({ status: "failed" }).eq("id", pendingPackMsg.id);
+          // fall through to process the displaced transaction normally!
+        } else {
+          const isSkipOrCatalogInfo = parsedReply.isSkip || parsedReply.stockQty != null || parsedReply.unitCost != null || parsedReply.isService;
+
+          if (!isSkipOrCatalogInfo) {
+            const hasNewIntent = Boolean(detectFastIntent(rawText || "") || /\b(sold|bought|restock|expense|paid|transfer|cash)\b/i.test(rawText || ""));
+            if (hasNewIntent) {
+              await supabase.from("whatsapp_messages").update({ status: "failed" }).eq("id", pendingPackMsg.id);
+            } else {
+              const rePrompt =
+                `To record *"${meta.product_name}"*, please reply with your stock and cost:\n` +
+                `📦 E.g.: *"12 in stock, cost 6000"*\n` +
+                `💡 Or reply *SKIP* to record without stock tracking, or *CANCEL*.`;
+              await replyToUser(supabase, tenant.id, fromPhone, rePrompt, senderMemberId);
+              return;
+            }
+          }
+
+          const saleAmount = meta.amount ?? 0;
+          const soldQty = meta.raw_qty ?? 1;
+          const saleUnit = meta.unit ?? "pcs";
+          const method = meta.payment_method ?? null;
+          const methodTag = method ? ` (${method.toUpperCase()})` : "";
+          const custName = meta.customer_name || null;
+          const isCredit = Boolean(meta.is_credit_sale);
+
+          let targetProductId: number | null = null;
+          let createdProdName = meta.product_name;
+          let finalStockRemaining: number | null = null;
+          let profitStr = "";
+
+          let limitNote = "";
+
+          if (parsedReply.isService) {
+            const { checkProductLimit } = await import("@/lib/billing-server");
+            const pLimit = await checkProductLimit(tenant.id);
+            if (pLimit.allowed) {
+              const { data: createdProduct } = await supabase
+                .from("products")
+                .insert({
+                  tenant_id: tenant.id,
+                  name: meta.product_name,
+                  quantity: 0,
+                  unit: "service",
+                  is_service: true,
+                })
+                .select("id, name, unit")
+                .single();
+
+              if (createdProduct) {
+                targetProductId = createdProduct.id;
+                createdProdName = createdProduct.name;
+              }
+            } else {
+              limitNote = `\n\n⚠️ _Could not save to catalog (plan product limit reached). Sale recorded as uncataloged._`;
+            }
+          } else if (!parsedReply.isSkip && (parsedReply.stockQty != null || parsedReply.unitCost != null)) {
+            const initialStock = parsedReply.stockQty != null ? Math.max(parsedReply.stockQty, soldQty) : soldQty;
+            const effectiveUnitCost = parsedReply.unitCost ?? null;
+            const prodUnit = parsedReply.unit || saleUnit || "pcs";
+
+            const { checkProductLimit } = await import("@/lib/billing-server");
+            const pLimit = await checkProductLimit(tenant.id);
+
+            if (pLimit.allowed) {
+              const { data: createdProduct } = await supabase
+                .from("products")
+                .insert({
+                  tenant_id: tenant.id,
+                  name: meta.product_name,
+                  quantity: initialStock,
+                  unit: prodUnit,
+                  unit_cost: effectiveUnitCost,
+                  reorder_threshold: Math.round(initialStock * 0.2),
+                  is_service: false,
+                })
+                .select("id, name, unit")
+                .single();
+
+              if (createdProduct) {
+                targetProductId = createdProduct.id;
+                createdProdName = createdProduct.name;
+
+                // Initial stock movement
+                await supabase.from("stock_movements").insert({
+                  tenant_id: tenant.id,
+                  product_id: createdProduct.id,
+                  change_qty: initialStock,
+                  type: "in",
+                  source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+                  reason: `Initial stock setup via WhatsApp (${initialStock} ${prodUnit})`,
+                  linked_message_id: waMsg.id,
+                });
+
+                // Deduct sold quantity
+                await updateProductStock({
+                  supabase,
+                  tenantId: tenant.id,
+                  productId: createdProduct.id,
+                  changeQty: -soldQty,
+                  type: "out",
+                  source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+                  linkedMessageId: waMsg.id,
+                  alertPhone: fromPhone,
+                  reason: `Sale of ${soldQty} ${prodUnit} via WhatsApp`,
+                });
+
+                if (parsedReply.stockQty != null) {
+                  finalStockRemaining = initialStock - soldQty;
+                }
+
+                if (effectiveUnitCost != null && saleAmount > 0) {
+                  const totalCostOfSale = effectiveUnitCost * soldQty;
+                  const grossProfit = saleAmount - totalCostOfSale;
+                  const profitSign = grossProfit >= 0 ? "+" : "";
+                  profitStr = `\n• Cost: *${nf.format(effectiveUnitCost)}/${prodUnit}* | Profit: *${profitSign}${nf.format(grossProfit)}* 📈`;
+                }
+              }
+            } else {
+              limitNote = `\n\n⚠️ _Could not save to catalog (plan product limit reached). Sale recorded as uncataloged._`;
+            }
+          } else {
+            // Merchant chose SKIP: create uncataloged product
+            const { checkProductLimit } = await import("@/lib/billing-server");
+            const pLimit = await checkProductLimit(tenant.id);
+            if (pLimit.allowed) {
+              const { data: createdProduct } = await supabase
+                .from("products")
+                .insert({
+                  tenant_id: tenant.id,
+                  name: meta.product_name,
+                  quantity: 0,
+                  unit: saleUnit,
+                  is_service: false,
+                })
+                .select("id, name")
+                .single();
+
+              if (createdProduct) {
+                targetProductId = createdProduct.id;
+                createdProdName = createdProduct.name;
+              }
+            }
+          }
+
+          const desc = custName
+            ? `Sold ${soldQty} ${saleUnit} of ${createdProdName} to ${custName}`
+            : `Sold ${soldQty} ${saleUnit} of ${createdProdName}`;
+
+          const { data: ledger } = await supabase
+            .from("ledger_entries")
+            .insert({
+              tenant_id: tenant.id,
+              type: "sale",
+              amount: saleAmount,
+              item_description: desc,
+              product_id: targetProductId,
+              payment_method: method,
+              customer_name: custName,
+              source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+              linked_message_id: waMsg.id,
+              confidence_score: 1.0,
+            })
+            .select("id")
+            .single();
+
+          const ledgerId = ledger?.id ?? null;
+
+          if (isCredit) {
+            try {
+              const amountPaid = meta.amount_paid ?? 0;
+              const amountOwed = meta.amount_owed ?? Math.max(0, saleAmount - amountPaid);
+              await supabase.from("customer_debts").insert({
+                tenant_id: tenant.id,
+                customer_name: custName || "Customer",
+                linked_entry_id: ledgerId,
+                total_amount: saleAmount,
+                amount_paid: amountPaid,
+                amount_owed: amountOwed,
+                status: amountOwed === 0 ? "settled" : amountPaid > 0 ? "partially_paid" : "unpaid",
+                notes: `${soldQty} ${saleUnit} of ${createdProdName}`,
+              });
+            } catch (err) {
+              console.error("Failed to insert customer debt:", err);
+            }
+          }
+
+          await supabase.from("whatsapp_messages").update({ status: "matched", linked_entry_id: ledgerId }).eq("id", pendingPackMsg.id);
+          await supabase.from("whatsapp_messages").update({ status: "matched", linked_entry_id: ledgerId }).eq("id", waMsg.id);
+
+          const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+          const custNote = custName ? ` to *${custName}*` : "";
+
+          let reply = "";
+          if (finalStockRemaining != null) {
+            reply =
+              `✅ *Product Added & Sale Recorded!*\n` +
+              `• Product: *${createdProdName}*${custNote}\n` +
+              `• Current Stock: *${finalStockRemaining} ${saleUnit}* remaining\n` +
+              `• Sale Amount: *${nf.format(saleAmount)}*${methodTag}${profitStr}`;
+          } else if (parsedReply.unitCost != null) {
+            reply =
+              `✅ *Product Added & Sale Recorded!*\n` +
+              `• Product: *${createdProdName}*${custNote}\n` +
+              `• Cost: *${nf.format(parsedReply.unitCost)}/${saleUnit}*${profitStr}\n` +
+              `• Sale Amount: *${nf.format(saleAmount)}*${methodTag}\n\n` +
+              `💡 _Tip: You can set your stock level anytime by texting e.g. "Restocked 20 ${createdProdName}"!_`;
+          } else {
+            reply =
+              `Got it! Sold ${soldQty} ${saleUnit} of *${createdProdName}* (*${nf.format(saleAmount)}*)${custNote}${methodTag}.\n\n` +
+              `💡 _Tip: Upload your full product list anytime on your dashboard: https://sparkbooks.com.ng/dashboard/products_`;
+          }
+
+          if (isCredit) {
+            const amountPaid = meta.amount_paid ?? 0;
+            const amountOwed = meta.amount_owed ?? Math.max(0, saleAmount - amountPaid);
+            reply += `\n• 👤 Customer Debt: *${custName || "Customer"}* owes *${nf.format(amountOwed)}* (Paid: ${nf.format(amountPaid)})`;
+          }
+
+          if (limitNote) {
+            reply += limitNote;
+          }
+
+          if (receiptUrl) {
+            reply += `\n\n🧾 *Customer Receipt:*\n${receiptUrl}`;
+          }
+
+          await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+          return;
+        }
+      }
     }
   } catch (packErr) {
     console.warn("Pending pack size reply check error:", packErr);
@@ -822,14 +1514,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   let catalog: any[] | null = null;
   const { data: catWithPkg, error: catPkgErr } = await supabase
     .from("products")
-    .select("id, name, unit, unit_cost, is_service, pieces_per_pack, packaging_units, categories(name)")
+    .select("id, name, unit, unit_cost, quantity, is_service, pieces_per_pack, packaging_units, categories(name)")
     .eq("tenant_id", tenant.id)
     .is("deleted_at", null);
 
   if (catPkgErr) {
     const { data: catFallback } = await supabase
       .from("products")
-      .select("id, name, unit, unit_cost, is_service, pieces_per_pack, categories(name)")
+      .select("id, name, unit, unit_cost, quantity, is_service, pieces_per_pack, categories(name)")
       .eq("tenant_id", tenant.id)
       .is("deleted_at", null);
     catalog = catFallback;
@@ -845,6 +1537,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       category: cat?.name ?? null,
       unit: p.unit,
       unit_cost: p.unit_cost,
+      quantity: Number(p.quantity ?? 0),
       is_service: p.is_service ?? false,
       pieces_per_pack: p.pieces_per_pack != null ? Number(p.pieces_per_pack) : null,
       packaging_units: parsePackagingUnits(p.packaging_units),
@@ -981,6 +1674,131 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
+  // 7A2b: UNDO / CANCEL LAST TRANSACTION ("This is not correct", "undo", "cancel last")
+  if (entry_type === "undo_last") {
+    // 1. Check if there was an active pending confirmation (e.g. pack size or price clarification)
+    const { data: pendingMsg } = await supabase
+      .from("whatsapp_messages")
+      .select("id, metadata")
+      .eq("tenant_id", tenant.id)
+      .eq("status", "pending_confirmation")
+      .not("metadata->pending_action", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pendingMsg) {
+      await supabase
+        .from("whatsapp_messages")
+        .update({ status: "failed" })
+        .eq("id", pendingMsg.id);
+
+      await supabase
+        .from("whatsapp_messages")
+        .update({ status: "matched" })
+        .eq("id", waMsg.id);
+
+      await replyToUser(supabase, tenant.id, fromPhone, "↩️ Pending transaction cancelled.", senderMemberId);
+      return;
+    }
+
+    // 2. Look for the most recent ledger entry in the last 20 minutes
+    const twentyMinsAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const { data: recentEntry } = await supabase
+      .from("ledger_entries")
+      .select("id, type, amount, item_description, product_id, created_at")
+      .eq("tenant_id", tenant.id)
+      .gte("created_at", twentyMinsAgo)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (recentEntry) {
+      // If it was a sale and product is tracked, restore stock
+      if (recentEntry.type === "sale" && recentEntry.product_id) {
+        const { data: sm } = await supabase
+          .from("stock_movements")
+          .select("id, change_qty")
+          .eq("tenant_id", tenant.id)
+          .eq("product_id", recentEntry.product_id)
+          .gte("created_at", twentyMinsAgo)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const qtyToRestore = sm?.change_qty ? Math.abs(Number(sm.change_qty)) : 1;
+        await updateProductStock({
+          supabase,
+          tenantId: tenant.id,
+          productId: recentEntry.product_id,
+          changeQty: qtyToRestore,
+          type: "in",
+          source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+          linkedMessageId: waMsg.id,
+          alertPhone: fromPhone,
+          reason: "Undo of cancelled sale via WhatsApp",
+        });
+      } else if (recentEntry.type === "expense" && recentEntry.product_id) {
+        const { data: sm } = await supabase
+          .from("stock_movements")
+          .select("id, change_qty")
+          .eq("tenant_id", tenant.id)
+          .eq("product_id", recentEntry.product_id)
+          .gte("created_at", twentyMinsAgo)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const qtyToDeduct = sm?.change_qty ? Math.abs(Number(sm.change_qty)) : 0;
+        if (qtyToDeduct > 0) {
+          await updateProductStock({
+            supabase,
+            tenantId: tenant.id,
+            productId: recentEntry.product_id,
+            changeQty: -qtyToDeduct,
+            type: "out",
+            source: isVoice ? "whatsapp_voice" : "whatsapp_text",
+            linkedMessageId: waMsg.id,
+            alertPhone: fromPhone,
+            reason: "Undo of cancelled restock via WhatsApp",
+          });
+        }
+      }
+
+      // If customer debt was linked, delete it
+      await supabase
+        .from("customer_debts")
+        .delete()
+        .eq("linked_entry_id", recentEntry.id);
+
+      // Delete the ledger entry
+      await supabase
+        .from("ledger_entries")
+        .delete()
+        .eq("id", recentEntry.id);
+
+      await supabase
+        .from("whatsapp_messages")
+        .update({ status: "matched" })
+        .eq("id", waMsg.id);
+
+      const reply =
+        `↩️ *Last Transaction Cancelled & Undone!*\n` +
+        `• Removed: *${recentEntry.item_description || "Transaction"}* (${nf.format(Number(recentEntry.amount))})\n` +
+        `• Physical stock and ledger have been fully restored.\n\n` +
+        `_You can re-enter your transaction anytime!_ 🎯`;
+
+      await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+      return;
+    }
+
+    // No recent entry to undo
+    await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
+    const reply = `I couldn't find any recent transactions in the last 20 minutes to undo. You can inspect and edit your full ledger anytime on your dashboard: https://sparkbooks.com.ng/dashboard`;
+    await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+    return;
+  }
+
   // 7A3: UPDATE PACK SIZE / PIECES PER CARTON (Conversational memory)
   if (entry_type === "update_pack_size" && confidence >= 0.7) {
     let productId = parsed.matched_product_id;
@@ -1041,10 +1859,56 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     return;
   }
 
-  // 7A4: ATTACH PURCHASE COST TO RECENTLY CONFIRMED RESTOCK (Conversational memory)
+  // 7A4: ATTACH PURCHASE COST OR UPDATE PREVIOUS SALE (Conversational memory)
   if (entry_type === "transaction_update" && confidence >= 0.7) {
     let productId = parsed.matched_product_id;
     let productName = parsed.matched_product_name;
+
+    // Check if the user is updating a SALE (e.g. "This was sold for 4000", "I sold the 1pack for 4000", "recorded for 0naira was actually sold for 4000")
+    const rawLower = (rawText || "").toLowerCase();
+    const isSaleCorrection =
+      /\b(?:sold|sell|sale)\b/i.test(rawLower) ||
+      (!/\b(?:cost|bought|purchase|restock)\b/i.test(rawLower) && parsed.amount != null);
+
+    if (isSaleCorrection && parsed.amount && parsed.amount > 0) {
+      const twentyMinsAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      let query = supabase
+        .from("ledger_entries")
+        .select("id, amount, product_id, item_description, customer_name")
+        .eq("tenant_id", tenant.id)
+        .eq("type", "sale")
+        .gte("created_at", twentyMinsAgo)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (productId) {
+        query = query.eq("product_id", productId);
+      }
+
+      const { data: recentSale } = await query.maybeSingle();
+
+      if (recentSale) {
+        await supabase
+          .from("ledger_entries")
+          .update({ amount: parsed.amount })
+          .eq("id", recentSale.id);
+
+        await supabase
+          .from("whatsapp_messages")
+          .update({ status: "matched", linked_entry_id: recentSale.id })
+          .eq("id", waMsg.id);
+
+        const receiptUrl = getReceiptUrl(recentSale.id);
+        const reply =
+          `✅ *Sale Price Updated!*\n` +
+          `• Description: *${recentSale.item_description}*\n` +
+          `• Updated Amount: *${nf.format(parsed.amount)}* (was ${nf.format(Number(recentSale.amount))})\n\n` +
+          `🧾 *Updated Receipt:*\n${receiptUrl}`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      }
+    }
 
     if (!productId && catalog && catalog.length > 0) {
       const targetName = (productName || "").toLowerCase().trim();
@@ -1652,8 +2516,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
   // 7G: CREDIT SALE / CUSTOMER DEBT
   if ((entry_type === "debt" || (parsed.amount_owed && parsed.amount_owed > 0)) && confidence >= 0.7) {
-    const productId = parsed.matched_product_id;
-    const productName = parsed.matched_product_name;
+    let productId = parsed.matched_product_id;
+    let productName = parsed.matched_product_name;
     const qty = Math.max(1, Math.abs(parsed.quantity ?? 1));
     const unit = parsed.unit ?? "pcs";
     const totalAmount = Math.max(0, Math.abs(parsed.amount ?? (parsed.amount_paid ?? 0) + (parsed.amount_owed ?? 0)));
@@ -1662,6 +2526,115 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const customerName = (parsed.customer_name || "Customer").trim();
     const method = parsed.payment_method ?? null;
     const methodTag = method ? ` (${method.toUpperCase()})` : "";
+
+    // ── CHECK PRODUCT IN CATALOG ──
+    const rawTargetName = (productName || parsed.new_product_name || "").trim();
+    const matchedInCatalog = productId ? catalogItems.find((c) => c.id === productId) : null;
+
+    if (!matchedInCatalog && rawTargetName) {
+      if (catalogItems.length === 0) {
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            status: "pending_confirmation",
+            metadata: {
+              pending_action: "new_product_cataloging",
+              product_name: rawTargetName,
+              raw_qty: qty,
+              unit,
+              amount: totalAmount,
+              payment_method: method,
+              customer_name: customerName,
+              is_credit_sale: true,
+              amount_paid: amountPaid,
+              amount_owed: amountOwed,
+            },
+          })
+          .eq("id", waMsg.id);
+
+        const reply =
+          `👋 Welcome to *SparkBooks*! Before we record your first credit sale, your product catalog is currently empty.\n\n` +
+          `Uploading your inventory first unlocks:\n` +
+          `• 📉 *Automated low-stock alerts before items finish*\n` +
+          `• 📊 *Accurate daily profit & cost calculations*\n\n` +
+          `*How would you like to add your products?*\n` +
+          `📁 *Option A (Fastest):* Upload your Excel/CSV list here:\nhttps://sparkbooks.com.ng/dashboard/products\n` +
+          `💬 *Option B:* Reply with your stock & cost (e.g. *"10 in stock, cost 5000"*).\n\n` +
+          `_Or reply **SKIP** to record this credit sale as uncataloged for now._`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      }
+
+      const matchResult = findBestCatalogMatches(rawTargetName, catalogItems);
+
+      if (matchResult.exactMatch) {
+        productId = matchResult.exactMatch.id;
+        productName = matchResult.exactMatch.name;
+      } else if (matchResult.fuzzyCandidates.length > 0) {
+        const topCandidate = matchResult.fuzzyCandidates[0].item;
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            status: "pending_confirmation",
+            metadata: {
+              pending_action: "fuzzy_product_clarification",
+              candidate_id: topCandidate.id,
+              candidate_name: topCandidate.name,
+              raw_product_name: rawTargetName,
+              raw_qty: qty,
+              unit,
+              amount: totalAmount,
+              payment_method: method,
+              customer_name: customerName,
+              is_credit_sale: true,
+              amount_paid: amountPaid,
+              amount_owed: amountOwed,
+            },
+          })
+          .eq("id", waMsg.id);
+
+        const stockStr = `${topCandidate.quantity} ${topCandidate.unit} in stock`;
+        const reply =
+          `🔍 I couldn't find *"${rawTargetName}"*, but found *${topCandidate.name}* in your catalog (${stockStr}).\n\n` +
+          `Did you mean *${topCandidate.name}*?\n` +
+          `1️⃣ *Yes* — Record credit sale & deduct stock\n` +
+          `2️⃣ *No* — This is a new product\n\n` +
+          `_(Reply **1** or **2**)_`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      } else {
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            status: "pending_confirmation",
+            metadata: {
+              pending_action: "new_product_cataloging",
+              product_name: rawTargetName,
+              raw_qty: qty,
+              unit,
+              amount: totalAmount,
+              payment_method: method,
+              customer_name: customerName,
+              is_credit_sale: true,
+              amount_paid: amountPaid,
+              amount_owed: amountOwed,
+            },
+          })
+          .eq("id", waMsg.id);
+
+        const reply =
+          `⚠️ *"${rawTargetName}"* is not in your product catalog yet!\n\n` +
+          `To track your stock and customer debt accurately, let's add it quickly:\n\n` +
+          `📦 *How many do you have in stock, and what did you buy each?*\n` +
+          `_(Reply e.g.: **"12 in stock, cost 6000"**)_\n\n` +
+          `💡 _Or reply **SKIP** to record the ${nf.format(totalAmount)} credit sale without stock tracking._`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      }
+    }
     // Check if product is service or has packaging tiers
     let qtyToDeduct = qty;
     let isProdService = false;
@@ -2036,28 +3009,133 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const amount = Math.max(0, Math.abs(parsed.amount ?? 0));
     const method = parsed.payment_method ?? null;
 
-    // If new item not in catalog yet, auto-create it
-    if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
-      const newName = (parsed.new_product_name || "New Item").trim();
-      const { checkProductLimit } = await import("@/lib/billing-server");
-      const pLimit = await checkProductLimit(tenant.id);
-
-      if (pLimit.allowed) {
-        const { data: createdProduct } = await supabase
-          .from("products")
-          .insert({
-            tenant_id: tenant.id,
-            name: newName,
-            quantity: 0,
+    // NEVER record a ₦0 sale silently! Intercept and ask the seller for the price.
+    if (!parsed.amount || parsed.amount <= 0) {
+      const targetLabel = productName || (parsed.new_product_name || "item");
+      await supabase
+        .from("whatsapp_messages")
+        .update({
+          status: "pending_confirmation",
+          metadata: {
+            pending_action: "sale_price_clarification",
+            product_id: productId,
+            product_name: targetLabel,
+            is_new_product: Boolean(!productId && (parsed.is_new_product || parsed.new_product_name)),
+            raw_qty: qty,
             unit,
-          })
-          .select("id, name")
-          .single();
+            payment_method: method,
+            customer_name: (parsed.customer_name || "").trim() || null,
+          },
+        })
+        .eq("id", waMsg.id);
 
-        if (createdProduct) {
-          productId = createdProduct.id;
-          productName = createdProduct.name;
-        }
+      const custLabel = parsed.customer_name ? ` to *${parsed.customer_name.trim()}*` : "";
+      const reply = `Got it, sold ${qty} ${unit} of *${targetLabel}*${custLabel}! 💰\n\nHow much did you sell it for?\n_(Reply e.g. "4000" or "4k")_`;
+
+      await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+      return;
+    }
+
+    // 2. CHECK PRODUCT IN CATALOG
+    const rawTargetName = (productName || parsed.new_product_name || "").trim();
+    let matchedInCatalog = productId ? catalogItems.find((c) => c.id === productId) : null;
+
+    if (!matchedInCatalog && rawTargetName) {
+      if (catalogItems.length === 0) {
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            status: "pending_confirmation",
+            metadata: {
+              pending_action: "new_product_cataloging",
+              product_name: rawTargetName,
+              raw_qty: qty,
+              unit,
+              amount,
+              payment_method: method,
+              customer_name: (parsed.customer_name || "").trim() || null,
+              is_credit_sale: false,
+            },
+          })
+          .eq("id", waMsg.id);
+
+        const reply =
+          `👋 Welcome to *SparkBooks*! Before we record your first sale, your product catalog is currently empty.\n\n` +
+          `Uploading your inventory first unlocks:\n` +
+          `• 📉 *Automated low-stock alerts before items finish*\n` +
+          `• 📊 *Accurate daily profit & cost calculations*\n\n` +
+          `*How would you like to add your products?*\n` +
+          `📁 *Option A (Fastest):* Upload your Excel/CSV list here:\nhttps://sparkbooks.com.ng/dashboard/products\n` +
+          `💬 *Option B:* Reply with your stock & cost (e.g. *"10 in stock, cost 5000"*).\n\n` +
+          `_Or reply **SKIP** to record this sale as uncataloged for now._`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      }
+
+      const matchResult = findBestCatalogMatches(rawTargetName, catalogItems);
+
+      if (matchResult.exactMatch) {
+        productId = matchResult.exactMatch.id;
+        productName = matchResult.exactMatch.name;
+      } else if (matchResult.fuzzyCandidates.length > 0) {
+        const topCandidate = matchResult.fuzzyCandidates[0].item;
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            status: "pending_confirmation",
+            metadata: {
+              pending_action: "fuzzy_product_clarification",
+              candidate_id: topCandidate.id,
+              candidate_name: topCandidate.name,
+              raw_product_name: rawTargetName,
+              raw_qty: qty,
+              unit,
+              amount,
+              payment_method: method,
+              customer_name: (parsed.customer_name || "").trim() || null,
+              is_credit_sale: false,
+            },
+          })
+          .eq("id", waMsg.id);
+
+        const stockStr = `${topCandidate.quantity} ${topCandidate.unit} in stock`;
+        const reply =
+          `🔍 I couldn't find *"${rawTargetName}"*, but found *${topCandidate.name}* in your catalog (${stockStr}).\n\n` +
+          `Did you mean *${topCandidate.name}*?\n` +
+          `1️⃣ *Yes* — Record sale & deduct stock\n` +
+          `2️⃣ *No* — This is a new product\n\n` +
+          `_(Reply **1** or **2**)_`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
+      } else {
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            status: "pending_confirmation",
+            metadata: {
+              pending_action: "new_product_cataloging",
+              product_name: rawTargetName,
+              raw_qty: qty,
+              unit,
+              amount,
+              payment_method: method,
+              customer_name: (parsed.customer_name || "").trim() || null,
+              is_credit_sale: false,
+            },
+          })
+          .eq("id", waMsg.id);
+
+        const reply =
+          `⚠️ *"${rawTargetName}"* is not in your product catalog yet!\n\n` +
+          `To track your stock and calculate your profit on this sale, let's add it quickly:\n\n` +
+          `📦 *How many do you have in stock, and what did you buy each?*\n` +
+          `_(Reply e.g.: **"12 in stock, cost 6000"**)_\n\n` +
+          `💡 _Or reply **SKIP** to record the ${nf.format(amount)} sale without stock tracking._`;
+
+        await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
+        return;
       }
     }
 

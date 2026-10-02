@@ -19,13 +19,24 @@ const REASONS = [
   "other",
 ] as const;
 
+function formatPlural(label: string): string {
+  const clean = label.trim();
+  if (!clean) return "";
+  const lower = clean.toLowerCase();
+  if (lower.endsWith("s") || lower.endsWith("x") || lower.endsWith("ch") || lower.endsWith("sh")) {
+    if (lower.endsWith("s")) return clean;
+    return `${clean}es`;
+  }
+  return `${clean}s`;
+}
+
 interface EditProductModalProps {
   /** Pass null for add-product mode */
   product: ProductRow | null;
   categories: Category[];
   tenantId: number;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (savedProduct?: ProductRow) => void;
   onCategoryCreated?: (newCategory: Category) => void;
 }
 
@@ -256,7 +267,7 @@ export function EditProductModal({
 
     try {
       if (isAdd) {
-        await createProduct(tenantId, {
+        const created = await createProduct(tenantId, {
           name: name.trim(),
           categoryId: categoryId ? Number(categoryId) : null,
           quantity: isService ? 0 : Number(newQuantity),
@@ -271,6 +282,36 @@ export function EditProductModal({
           piecesPerPack: isService ? null : topPack,
           packagingUnits: resolvedLadder,
         });
+
+        const selectedCat = categoryId
+          ? availableCategories.find((c) => c.id === Number(categoryId))
+          : null;
+        const finalQty = isService ? 0 : Number(newQuantity);
+        const finalCost = unitCost ? Number(unitCost) : null;
+        const finalThreshold = isService
+          ? null
+          : (reorderThreshold ? Number(reorderThreshold) : Math.round(finalQty * 0.2));
+
+        const createdRow: ProductRow = {
+          id: created?.id ?? Date.now(),
+          name: name.trim(),
+          categoryId: categoryId ? Number(categoryId) : null,
+          categoryName: selectedCat ? selectedCat.name : null,
+          unit: resolvedUnit,
+          unitCost: finalCost,
+          quantity: finalQty,
+          reorderThreshold: finalThreshold,
+          lastRestocked: new Date().toISOString(),
+          isLowStock: !isService && finalThreshold !== null ? finalQty <= finalThreshold : false,
+          totalValue: finalQty * (finalCost ?? 0),
+          totalSold: 0,
+          totalRevenue: 0,
+          isService,
+          piecesPerPack: isService ? null : topPack,
+          packagingUnits: resolvedLadder,
+        };
+
+        onSaved(createdRow);
       } else {
         await updateProduct(tenantId, {
           id: product.id,
@@ -289,8 +330,32 @@ export function EditProductModal({
           piecesPerPack: isService ? null : topPack,
           packagingUnits: resolvedLadder,
         });
+
+        const selectedCat = categoryId
+          ? availableCategories.find((c) => c.id === Number(categoryId))
+          : null;
+        const finalQty = isService ? 0 : Number(newQuantity);
+        const finalCost = unitCost ? Number(unitCost) : null;
+        const finalThreshold = isService ? null : (reorderThreshold ? Number(reorderThreshold) : null);
+
+        const updatedRow: ProductRow = {
+          ...product,
+          name: name.trim(),
+          categoryId: categoryId ? Number(categoryId) : null,
+          categoryName: selectedCat ? selectedCat.name : null,
+          unit: resolvedUnit,
+          unitCost: finalCost,
+          quantity: finalQty,
+          reorderThreshold: finalThreshold,
+          isLowStock: !isService && finalThreshold !== null ? finalQty <= finalThreshold : false,
+          totalValue: finalQty * (finalCost ?? 0),
+          isService,
+          piecesPerPack: isService ? null : topPack,
+          packagingUnits: resolvedLadder,
+        };
+
+        onSaved(updatedRow);
       }
-      onSaved();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -519,7 +584,7 @@ export function EditProductModal({
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
                           Quick Industry Presets:
                         </span>
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex gap-1.5 overflow-x-auto pb-1 sm:flex-wrap">
                           {PACKAGING_TEMPLATES.map((tmpl) => (
                             <button
                               key={tmpl.id}
@@ -534,7 +599,7 @@ export function EditProductModal({
                                 setStockInputUnit("base");
                                 setStockDisplayQty(newQuantity);
                               }}
-                              className="text-[10px] px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold transition-colors shadow-2xs"
+                              className="text-[10px] px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold transition-colors shadow-2xs whitespace-nowrap shrink-0"
                             >
                               {tmpl.label}
                             </button>
@@ -542,87 +607,115 @@ export function EditProductModal({
                         </div>
                       </div>
 
-                      {/* Packaging Ladder Table */}
-                      <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
-                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 pb-1.5 border-b border-slate-100">
-                          <span>Packaging Container</span>
-                          <span>Contains</span>
-                        </div>
-
+                      {/* Packaging Tiers List (Natural Equation Cards) */}
+                      <div className="space-y-2.5">
                         {packagingTiers.map((tier, idx) => {
                           const subUnitLabel =
-                            idx === 0 ? unit.trim() || "pcs" : packagingTiers[idx - 1].name;
+                            idx === 0
+                              ? unit.trim() || "piece"
+                              : packagingTiers[idx - 1].name.trim() || `Tier ${idx}`;
                           const runningLadder = buildPackagingLadder(
                             packagingTiers.slice(0, idx + 1),
                           );
                           const currentMultiplier =
                             runningLadder[idx]?.to_base || tier.size;
 
+                          const tierHeading =
+                            idx === 0
+                              ? "Tier 1: Small Bulk Container (e.g. Pack, Card, Roll)"
+                              : idx === 1
+                                ? "Tier 2: Medium/Large Bulk (e.g. Carton, Bundle)"
+                                : `Tier ${idx + 1}: Higher Bulk Container (e.g. Crate, Pallet)`;
+
                           return (
-                            <div key={idx} className="flex items-center gap-2 py-1">
-                              <span className="text-xs text-slate-400 font-mono w-4">
-                                {idx + 1}.
-                              </span>
-                              <div className="flex-1">
-                                <input
-                                  type="text"
-                                  value={tier.name}
-                                  onChange={(e) => {
-                                    const updated = [...packagingTiers];
-                                    updated[idx] = {
-                                      ...updated[idx],
-                                      name: e.target.value,
-                                    };
-                                    setPackagingTiers(updated);
-                                  }}
-                                  placeholder="e.g. card, pack, carton"
-                                  className="w-full text-xs py-1.5 px-2.5 rounded-lg border border-slate-300 font-semibold text-slate-900 bg-white placeholder:text-slate-400 focus:border-spark focus:ring-1 focus:ring-spark outline-none transition-colors"
-                                />
-                              </div>
-                              <span className="text-xs text-slate-500 font-medium">
-                                has
-                              </span>
-                              <div className="w-20">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={tier.size}
-                                  onChange={(e) => {
-                                    const updated = [...packagingTiers];
-                                    updated[idx] = {
-                                      ...updated[idx],
-                                      size: Math.max(1, Number(e.target.value) || 1),
-                                    };
-                                    setPackagingTiers(updated);
-                                  }}
-                                  className="w-full text-xs py-1.5 px-2 rounded-lg border border-slate-300 font-mono font-bold text-slate-900 bg-white text-center focus:border-spark focus:ring-1 focus:ring-spark outline-none transition-colors"
-                                />
-                              </div>
-                              <span
-                                className="text-xs text-slate-700 font-semibold w-24 truncate"
-                                title={subUnitLabel}
-                              >
-                                {subUnitLabel}
-                              </span>
-                              {idx > 0 && currentMultiplier > tier.size && (
-                                <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
-                                  (={currentMultiplier.toLocaleString()}{" "}
-                                  {unit.trim() || "pcs"})
+                            <div
+                              key={idx}
+                              className="p-3 bg-white rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5 relative"
+                            >
+                              <div className="flex items-center justify-between text-[11px] font-semibold pb-1.5 border-b border-slate-100">
+                                <span className="flex items-center gap-1.5 text-slate-700 font-bold">
+                                  <span className="w-4 h-4 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center text-[10px] font-mono">
+                                    {idx + 1}
+                                  </span>
+                                  <span>{tierHeading}</span>
                                 </span>
-                              )}
-                              {packagingTiers.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPackagingTiers(
-                                      packagingTiers.filter((_, i) => i !== idx),
-                                    );
-                                  }}
-                                  className="text-xs text-slate-400 hover:text-rose-600 p-1 font-bold"
-                                  title="Remove tier"
-                                >
-                                  ✕
-                                </button>
+                                {packagingTiers.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPackagingTiers(
+                                        packagingTiers.filter((_, i) => i !== idx),
+                                      );
+                                    }}
+                                    className="text-slate-400 hover:text-rose-600 text-xs px-1.5 py-0.5 rounded hover:bg-rose-50 transition-colors font-bold"
+                                    title="Remove tier"
+                                  >
+                                    ✕ Remove
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Natural Equation: 1 [ Container Name ] = [ Size ] [ SubUnits ] */}
+                              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                                <div className="flex items-center gap-1.5 flex-1 min-w-[130px]">
+                                  <span className="text-xs font-bold text-slate-600 shrink-0">
+                                    1
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={tier.name}
+                                    onChange={(e) => {
+                                      const updated = [...packagingTiers];
+                                      updated[idx] = {
+                                        ...updated[idx],
+                                        name: e.target.value,
+                                      };
+                                      setPackagingTiers(updated);
+                                    }}
+                                    placeholder={idx === 0 ? "e.g. pack" : "e.g. carton"}
+                                    className="w-full text-xs py-2 px-3 rounded-lg border border-slate-300 font-semibold text-slate-900 bg-white placeholder:text-slate-400 focus:border-spark focus:ring-1 focus:ring-spark outline-none transition-colors"
+                                  />
+                                </div>
+
+                                <span className="text-xs font-bold text-slate-400 shrink-0">
+                                  =
+                                </span>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={tier.size}
+                                    onChange={(e) => {
+                                      const updated = [...packagingTiers];
+                                      updated[idx] = {
+                                        ...updated[idx],
+                                        size: Math.max(1, Number(e.target.value) || 1),
+                                      };
+                                      setPackagingTiers(updated);
+                                    }}
+                                    className="w-20 text-xs py-2 px-2.5 rounded-lg border border-slate-300 font-mono font-bold text-slate-900 bg-white text-center focus:border-spark focus:ring-1 focus:ring-spark outline-none transition-colors"
+                                  />
+                                  <span
+                                    className="text-xs text-slate-700 font-semibold truncate max-w-[120px]"
+                                    title={subUnitLabel}
+                                  >
+                                    {formatPlural(subUnitLabel)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Multi-tier Calculation Preview */}
+                              {idx > 0 && currentMultiplier > tier.size && (
+                                <div className="text-[11px] text-slate-600 font-medium bg-slate-50 px-2.5 py-1.5 rounded-md flex items-center justify-between border border-slate-100">
+                                  <span className="text-slate-500">
+                                    ↳ 1 {tier.name.trim() || `Tier ${idx + 1}`} equals:
+                                  </span>
+                                  <span className="font-mono font-bold text-emerald-800">
+                                    {currentMultiplier.toLocaleString()}{" "}
+                                    {formatPlural(unit.trim() || "piece")}
+                                  </span>
+                                </div>
                               )}
                             </div>
                           );
@@ -643,9 +736,10 @@ export function EditProductModal({
                                 { name: nextName, size: 10 },
                               ]);
                             }}
-                            className="mt-2 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 transition-colors"
+                            className="w-full py-2.5 border-2 border-dashed border-slate-300 hover:border-spark text-xs font-bold text-emerald-700 hover:text-emerald-900 bg-white hover:bg-emerald-50/50 rounded-xl flex items-center justify-center gap-1.5 transition-all"
                           >
-                            + Add higher container tier (e.g. Carton, Pallet)
+                            <span>+</span>
+                            <span>Add Higher Container (e.g. Carton, Pallet)</span>
                           </button>
                         )}
                       </div>
@@ -691,8 +785,8 @@ export function EditProductModal({
                         <option value="base">{unit.trim() || "pcs"} (base piece)</option>
                         {activeLadder.map((tier) => (
                           <option key={tier.name} value={tier.name}>
-                            {tier.name}s ({tier.to_base.toLocaleString()}{" "}
-                            {unit.trim() || "pcs"})
+                            {formatPlural(tier.name)} ({tier.to_base.toLocaleString()}{" "}
+                            {formatPlural(unit.trim() || "piece")})
                           </option>
                         ))}
                       </select>

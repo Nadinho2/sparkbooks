@@ -40,7 +40,7 @@ export type CreateProductData = {
 export async function createProduct(
   _clientTenantId: number,
   data: CreateProductData,
-): Promise<void> {
+): Promise<{ id: number }> {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
@@ -134,6 +134,7 @@ export async function createProduct(
   }
 
   revalidatePath("/dashboard/products");
+  return { id: created?.id ?? 0 };
 }
 
 export async function updateProduct(
@@ -561,6 +562,7 @@ export interface BulkProductItem {
 export interface BulkImportResult {
   success: boolean;
   imported: number;
+  updated?: number;
   skippedDuplicates: string[];
   error?: string;
 }
@@ -643,16 +645,21 @@ export async function bulkImportProducts(
     });
   }
 
-  // Fetch existing products to check for duplicates
+  // Fetch existing products to check for duplicates and update existing stock
   const { data: existingProducts } = await supabase
     .from("products")
-    .select("name")
+    .select("id, name, quantity, unit_cost, unit")
     .eq("tenant_id", tenantId)
     .is("deleted_at", null);
 
-  const existingNameSet = new Set(
-    (existingProducts ?? []).map((p) => p.name.trim().toLowerCase()),
-  );
+  const existingProductMap = new Map<string, { id: number; quantity: number; unit_cost: number | null }>();
+  (existingProducts ?? []).forEach((p) => {
+    existingProductMap.set(p.name.trim().toLowerCase(), {
+      id: p.id,
+      quantity: Number(p.quantity || 0),
+      unit_cost: p.unit_cost != null ? Number(p.unit_cost) : null,
+    });
+  });
 
   const skippedDuplicates: string[] = [];
   const toInsert: Array<{
@@ -668,20 +675,13 @@ export async function bulkImportProducts(
   }> = [];
 
   const seenInBatch = new Set<string>();
+  let updatedCount = 0;
 
   for (const item of products) {
     const cleanName = item.name?.trim();
     if (!cleanName) continue;
 
     const lowerName = cleanName.toLowerCase();
-    if (existingNameSet.has(lowerName) || seenInBatch.has(lowerName)) {
-      skippedDuplicates.push(cleanName);
-      if (options?.skipDuplicates !== false) {
-        continue;
-      }
-    }
-    seenInBatch.add(lowerName);
-
     const isService = Boolean(item.isService);
     const qty = isService ? 0 : Math.max(0, Number(item.quantity) || 0);
     const cost =
@@ -704,12 +704,67 @@ export async function bulkImportProducts(
       catId = categoryMap.get(item.categoryName.trim().toLowerCase()) ?? null;
     }
 
+    // Check if product already exists in database
+    const existing = existingProductMap.get(lowerName);
+    if (existing) {
+      if (options?.skipDuplicates !== false) {
+        skippedDuplicates.push(cleanName);
+        continue;
+      }
+
+      // If user did NOT skip duplicates (or wants to update existing):
+      // Update existing record rather than creating a duplicate row!
+      const newQty = existing.quantity + qty;
+      const updateData: Record<string, unknown> = {
+        quantity: newQty,
+      };
+      if (cost != null) {
+        updateData.unit_cost = cost;
+      }
+      if (catId != null) {
+        updateData.category_id = catId;
+      }
+      if (piecesPerPack != null) {
+        updateData.pieces_per_pack = piecesPerPack;
+      }
+
+      await supabase
+        .from("products")
+        .update(updateData)
+        .eq("id", existing.id)
+        .eq("tenant_id", tenantId);
+
+      // Record stock movement for the restock if quantity > 0
+      if (qty > 0 && !isService) {
+        await supabase.from("stock_movements").insert({
+          tenant_id: tenantId,
+          product_id: existing.id,
+          change_qty: qty,
+          type: "in",
+          source: "dashboard_csv_import",
+          reason: "Bulk CSV/Excel re-import restock",
+        });
+      }
+
+      existing.quantity = newQty;
+      if (cost != null) existing.unit_cost = cost;
+      updatedCount++;
+      continue;
+    }
+
+    // Deduplicate within the same file batch
+    if (seenInBatch.has(lowerName)) {
+      skippedDuplicates.push(cleanName);
+      continue;
+    }
+    seenInBatch.add(lowerName);
+
     toInsert.push({
       tenant_id: tenantId,
       name: cleanName,
       category_id: catId,
       quantity: qty,
-      unit: item.unit?.trim() || "item",
+      unit: item.unit?.trim() || "pcs",
       unit_cost: cost,
       reorder_threshold: threshold,
       is_service: isService,
@@ -717,10 +772,11 @@ export async function bulkImportProducts(
     });
   }
 
-  if (toInsert.length === 0) {
+  if (toInsert.length === 0 && updatedCount === 0) {
     return {
       success: true,
       imported: 0,
+      updated: 0,
       skippedDuplicates,
       error:
         skippedDuplicates.length > 0
@@ -729,38 +785,43 @@ export async function bulkImportProducts(
     };
   }
 
-  // Insert products
-  const { data: inserted, error: insertError } = await supabase
-    .from("products")
-    .insert(toInsert)
-    .select("id, quantity, is_service");
+  let insertedCount = 0;
+  if (toInsert.length > 0) {
+    // Insert products
+    const { data: inserted, error: insertError } = await supabase
+      .from("products")
+      .insert(toInsert)
+      .select("id, quantity, is_service");
 
-  if (insertError) {
-    return {
-      success: false,
-      imported: 0,
-      skippedDuplicates,
-      error: insertError.message,
-    };
-  }
+    if (insertError) {
+      return {
+        success: false,
+        imported: 0,
+        updated: updatedCount,
+        skippedDuplicates,
+        error: insertError.message,
+      };
+    }
+    insertedCount = inserted?.length ?? toInsert.length;
 
-  // Create initial stock movements for non-service products with quantity > 0
-  const movements = (inserted ?? [])
-    .filter((p) => !p.is_service && Number(p.quantity) > 0)
-    .map((p) => ({
-      tenant_id: tenantId,
-      product_id: p.id,
-      change_qty: Number(p.quantity),
-      type: "in",
-      source: "dashboard_csv_import",
-      reason: "Bulk CSV/Excel import",
-    }));
+    // Create initial stock movements for non-service products with quantity > 0
+    const movements = (inserted ?? [])
+      .filter((p) => !p.is_service && Number(p.quantity) > 0)
+      .map((p) => ({
+        tenant_id: tenantId,
+        product_id: p.id,
+        change_qty: Number(p.quantity),
+        type: "in",
+        source: "dashboard_csv_import",
+        reason: "Bulk CSV/Excel import",
+      }));
 
-  if (movements.length > 0) {
-    try {
-      await supabase.from("stock_movements").insert(movements);
-    } catch (movErr) {
-      console.warn("Could not insert initial stock movements for bulk import:", movErr);
+    if (movements.length > 0) {
+      try {
+        await supabase.from("stock_movements").insert(movements);
+      } catch (movErr) {
+        console.warn("Could not insert initial stock movements for bulk import:", movErr);
+      }
     }
   }
 
@@ -768,7 +829,8 @@ export async function bulkImportProducts(
 
   return {
     success: true,
-    imported: inserted?.length ?? toInsert.length,
+    imported: insertedCount,
+    updated: updatedCount,
     skippedDuplicates,
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { formatNaira } from "@/lib/format";
 import { EditProductModal } from "./EditProductModal";
 import { ProductDetailModal } from "./ProductDetailModal";
@@ -49,6 +50,7 @@ export function ProductTable({
   isOwner = true,
   canBulkUpload = false,
 }: ProductTableProps) {
+  const router = useRouter();
   const [items, setItems] = useState<ProductRow[]>(products);
   const [categoryList, setCategoryList] = useState<Category[]>(categories);
 
@@ -134,10 +136,17 @@ export function ProductTable({
 
   const handleDelete = useCallback(async () => {
     if (!deleting) return;
-    await softDeleteProduct(tenantId, deleting.id);
+    const idToDelete = deleting.id;
     setDeleting(null);
-    window.location.reload();
-  }, [deleting, tenantId]);
+    setItems((prev) => prev.filter((item) => item.id !== idToDelete));
+    try {
+      await softDeleteProduct(tenantId, idToDelete);
+      router.refresh();
+    } catch (err) {
+      console.error("Failed to delete product:", err);
+      router.refresh();
+    }
+  }, [deleting, tenantId, router]);
 
   return (
     <>
@@ -792,9 +801,14 @@ export function ProductTable({
           categories={categoryList}
           tenantId={tenantId}
           onClose={() => setEditing(null)}
-          onSaved={() => {
+          onSaved={(updatedProduct) => {
             setEditing(null);
-            window.location.reload();
+            if (updatedProduct) {
+              setItems((prev) =>
+                prev.map((item) => (item.id === updatedProduct.id ? updatedProduct : item))
+              );
+            }
+            router.refresh();
           }}
           onCategoryCreated={(newCat) => {
             setCategoryList((prev) => {
@@ -812,9 +826,12 @@ export function ProductTable({
           categories={categoryList}
           tenantId={tenantId}
           onClose={() => setAdding(false)}
-          onSaved={() => {
+          onSaved={(newProduct) => {
             setAdding(false);
-            window.location.reload();
+            if (newProduct) {
+              setItems((prev) => [newProduct, ...prev]);
+            }
+            router.refresh();
           }}
           onCategoryCreated={(newCat) => {
             setCategoryList((prev) => {
@@ -862,8 +879,8 @@ export function ProductTable({
               `Successfully imported ${count} product${count === 1 ? "" : "s"} into your catalog!`
             );
             setTimeout(() => {
-              window.location.reload();
-            }, 1200);
+              router.refresh();
+            }, 1000);
           }}
         />
       )}
