@@ -138,7 +138,7 @@ export async function GET(request: NextRequest) {
 
     let msg =
       `🌙 *SparkBooks Daily Closing Report*\n` +
-      `*${tenant.business_name}* &bull; ${dateStr}\n\n` +
+      `*${tenant.business_name}* • ${dateStr}\n\n` +
       `💰 *Total Sales:* ${formatNaira(totalSales)} (${saleCount} transactions)\n`;
 
     if (totalSales > 0) {

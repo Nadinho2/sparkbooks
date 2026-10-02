@@ -20,6 +20,7 @@ type MappableField =
   | "quantity"
   | "unit"
   | "unitCost"
+  | "bulkCost"
   | "reorderThreshold"
   | "piecesPerPack";
 
@@ -28,7 +29,8 @@ const FIELD_OPTIONS: { key: MappableField; label: string; required?: boolean }[]
   { key: "categoryName", label: "Category" },
   { key: "quantity", label: "Initial Quantity / Stock" },
   { key: "unit", label: "Unit (e.g. pcs, bundle, bag)" },
-  { key: "unitCost", label: "Buying Price / Cost (₦)" },
+  { key: "unitCost", label: "Buying Price (Per-Unit Cost ₦)" },
+  { key: "bulkCost", label: "Buying Price (Total Bulk / Batch Cost ₦)" },
   { key: "reorderThreshold", label: "Low Stock Alert Level" },
   { key: "piecesPerPack", label: "Pieces per Pack" },
 ];
@@ -43,6 +45,7 @@ export function BulkUploadModal({
   const [headers, setHeaders] = useState<string[]>([]);
   const [rawRows, setRawRows] = useState<string[][]>([]);
   const [columnMap, setColumnMap] = useState<Record<string, MappableField>>({});
+  const [priceMode, setPriceMode] = useState<"unit" | "bulk">("unit");
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -120,12 +123,26 @@ export function BulkUploadModal({
       ) {
         if (!Object.values(map).includes("unit")) map[col] = "unit";
       } else if (
+        lower.includes("bulk") ||
+        lower.includes("total cost") ||
+        lower.includes("total price") ||
+        lower.includes("batch") ||
+        lower.includes("carton cost") ||
+        lower.includes("carton price")
+      ) {
+        if (!Object.values(map).includes("bulkCost")) {
+          map[col] = "bulkCost";
+          setPriceMode("bulk");
+        }
+      } else if (
         lower.includes("cost") ||
         lower.includes("buying") ||
         lower.includes("purchase") ||
         lower.includes("price")
       ) {
-        if (!Object.values(map).includes("unitCost")) map[col] = "unitCost";
+        if (!Object.values(map).includes("unitCost") && !Object.values(map).includes("bulkCost")) {
+          map[col] = "unitCost";
+        }
       } else if (
         lower.includes("alert") ||
         lower.includes("reorder") ||
@@ -237,8 +254,11 @@ export function BulkUploadModal({
   }
 
   // Compute mapped products preview
-  const mappedProducts: BulkProductItem[] = rawRows.map((row) => {
-    const item: BulkProductItem = { name: "" };
+  const mappedProducts: (BulkProductItem & { bulkCost?: number | null; rawCost?: number | null })[] = rawRows.map((row) => {
+    const item: BulkProductItem & { bulkCost?: number | null; rawCost?: number | null } = { name: "" };
+    let parsedUnitCost: number | null = null;
+    let parsedBulkCost: number | null = null;
+
     headers.forEach((header, idx) => {
       const field = columnMap[header];
       const val = row[idx]?.trim();
@@ -253,13 +273,34 @@ export function BulkUploadModal({
       } else if (field === "unit") {
         item.unit = val;
       } else if (field === "unitCost") {
-        item.unitCost = parseFloat(val.replace(/,/g, "")) || null;
+        parsedUnitCost = parseFloat(val.replace(/,/g, "")) || null;
+      } else if (field === "bulkCost") {
+        parsedBulkCost = parseFloat(val.replace(/,/g, "")) || null;
       } else if (field === "reorderThreshold") {
         item.reorderThreshold = parseFloat(val.replace(/,/g, "")) || null;
       } else if (field === "piecesPerPack") {
         item.piecesPerPack = parseInt(val.replace(/,/g, ""), 10) || null;
       }
     });
+
+    const qty = item.quantity || 0;
+
+    // Resolve bulk vs unit cost:
+    if (parsedBulkCost != null) {
+      item.bulkCost = parsedBulkCost;
+      item.rawCost = parsedBulkCost;
+      item.unitCost = qty > 0 ? Number((parsedBulkCost / qty).toFixed(2)) : parsedBulkCost;
+    } else if (parsedUnitCost != null) {
+      item.rawCost = parsedUnitCost;
+      if (priceMode === "bulk") {
+        item.bulkCost = parsedUnitCost;
+        item.unitCost = qty > 0 ? Number((parsedUnitCost / qty).toFixed(2)) : parsedUnitCost;
+      } else {
+        item.unitCost = parsedUnitCost;
+        item.bulkCost = qty > 0 ? Math.round(parsedUnitCost * qty * 100) / 100 : null;
+      }
+    }
+
     return item;
   });
 
@@ -460,6 +501,45 @@ export function BulkUploadModal({
                 </div>
               </div>
 
+              {/* Price Mode Interpretation Selector */}
+              <div className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-ink">Price Column Interpretation</span>
+                    <span className="text-[10px] uppercase font-semibold tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      Smart Calculation
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-ink-muted mt-0.5">
+                    Did the price column list the cost per single item, or the total bulk amount paid for the whole batch?
+                  </p>
+                </div>
+                <div className="inline-flex rounded-xl p-1 bg-slate-200/80 text-xs shrink-0 font-medium self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setPriceMode("unit")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                      priceMode === "unit"
+                        ? "bg-white text-ink shadow-xs font-semibold"
+                        : "text-slate-600 hover:text-ink"
+                    }`}
+                  >
+                    Per-Unit Price (₦/pc)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPriceMode("bulk")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                      priceMode === "bulk"
+                        ? "bg-white text-emerald-800 shadow-xs font-semibold"
+                        : "text-slate-600 hover:text-ink"
+                    }`}
+                  >
+                    Total Bulk Price (Batch ₦)
+                  </button>
+                </div>
+              </div>
+
               {/* Step 3: Preview */}
               <div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-2.5">
@@ -503,14 +583,21 @@ export function BulkUploadModal({
                         <th className="py-2.5 px-3">Category</th>
                         <th className="py-2.5 px-3 text-right">Quantity</th>
                         <th className="py-2.5 px-3">Unit</th>
-                        <th className="py-2.5 px-3 text-right">Unit Cost</th>
+                        {priceMode === "bulk" ? (
+                          <>
+                            <th className="py-2.5 px-3 text-right">Bulk Price (₦)</th>
+                            <th className="py-2.5 px-3 text-right">Calculated Unit Cost</th>
+                          </>
+                        ) : (
+                          <th className="py-2.5 px-3 text-right">Unit Cost (₦)</th>
+                        )}
                         <th className="py-2.5 px-3 text-right">Alert Level</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {displayedProducts.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-8 text-center text-ink-muted text-xs">
+                          <td colSpan={priceMode === "bulk" ? 8 : 7} className="py-8 text-center text-ink-muted text-xs">
                             No products match &ldquo;{previewSearch}&rdquo;
                           </td>
                         </tr>
@@ -534,9 +621,26 @@ export function BulkUploadModal({
                               {p.quantity ?? 0}
                             </td>
                             <td className="py-2.5 px-3 text-ink-muted">{p.unit || "item"}</td>
-                            <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-800">
-                              {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
-                            </td>
+                            {priceMode === "bulk" ? (
+                              <>
+                                <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-700">
+                                  {p.bulkCost != null ? formatNaira(p.bulkCost) : "—"}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono font-medium text-emerald-700">
+                                  {p.unitCost != null ? (
+                                    <span title={`${formatNaira(p.bulkCost || 0)} ÷ ${p.quantity || 1}`}>
+                                      {formatNaira(p.unitCost)} / {p.unit || "unit"}
+                                    </span>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
+                              </>
+                            ) : (
+                              <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-800">
+                                {p.unitCost != null ? formatNaira(p.unitCost) : "—"}
+                              </td>
+                            )}
                             <td className="py-2.5 px-3 text-right font-mono text-slate-600">
                               {p.reorderThreshold != null ? p.reorderThreshold : "—"}
                             </td>

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import type { ProductRow, Category } from "./ProductTable";
 import { updateProduct, createProduct } from "@/app/dashboard/products/actions";
+import { formatNaira } from "@/lib/format";
 
 const REASONS = [
   "stock count correction",
@@ -41,15 +42,78 @@ export function EditProductModal({
     product ? String(product.quantity) : "0",
   );
   const [unit, setUnit] = useState(product?.unit ?? "");
+  const [costMode, setCostMode] = useState<"unit" | "bulk">("unit");
   const [unitCost, setUnitCost] = useState(
     product?.unitCost != null ? String(product.unitCost) : "",
   );
+  const [bulkCost, setBulkCost] = useState<string>(() => {
+    if (product?.unitCost != null && product.quantity > 0) {
+      return String(Math.round(product.unitCost * product.quantity * 100) / 100);
+    }
+    return "";
+  });
   const [reorderThreshold, setReorderThreshold] = useState(
     product?.reorderThreshold != null ? String(product.reorderThreshold) : "",
   );
   const [reason, setReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function handleQuantityChange(val: string) {
+    setNewQuantity(val);
+    const qty = Number(val);
+    if (costMode === "bulk" && bulkCost && qty > 0) {
+      const b = parseFloat(bulkCost);
+      if (!isNaN(b)) {
+        setUnitCost(String(Number((b / qty).toFixed(2))));
+      }
+    } else if (costMode === "unit" && unitCost && qty > 0) {
+      const u = parseFloat(unitCost);
+      if (!isNaN(u)) {
+        setBulkCost(String(Math.round(u * qty * 100) / 100));
+      }
+    }
+  }
+
+  function handleUnitCostChange(val: string) {
+    setUnitCost(val);
+    const qty = Number(newQuantity);
+    const u = parseFloat(val);
+    if (qty > 0 && !isNaN(u)) {
+      setBulkCost(String(Math.round(u * qty * 100) / 100));
+    } else if (!val) {
+      setBulkCost("");
+    }
+  }
+
+  function handleBulkCostChange(val: string) {
+    setBulkCost(val);
+    const qty = Number(newQuantity);
+    const b = parseFloat(val);
+    if (qty > 0 && !isNaN(b)) {
+      setUnitCost(String(Number((b / qty).toFixed(2))));
+    } else if (!val) {
+      setUnitCost("");
+    }
+  }
+
+  function switchToBulk() {
+    setCostMode("bulk");
+    const qty = Number(newQuantity);
+    const u = parseFloat(unitCost);
+    if (qty > 0 && !isNaN(u) && !bulkCost) {
+      setBulkCost(String(Math.round(u * qty * 100) / 100));
+    }
+  }
+
+  function switchToUnit() {
+    setCostMode("unit");
+    const qty = Number(newQuantity);
+    const b = parseFloat(bulkCost);
+    if (qty > 0 && !isNaN(b) && !unitCost) {
+      setUnitCost(String(Number((b / qty).toFixed(2))));
+    }
+  }
 
   const quantityDelta = product ? Number(newQuantity) - product.quantity : 0;
   const quantityChanged = !isAdd && !isService && quantityDelta !== 0;
@@ -181,7 +245,7 @@ export function EditProductModal({
                     min="0"
                     step="any"
                     value={newQuantity}
-                    onChange={(e) => setNewQuantity(e.target.value)}
+                    onChange={(e) => handleQuantityChange(e.target.value)}
                     required={!isService}
                     className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
                   />
@@ -208,29 +272,94 @@ export function EditProductModal({
                 </label>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs text-ink-muted">Unit cost (&#8358;)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={unitCost}
-                    onChange={(e) => setUnitCost(e.target.value)}
-                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs text-ink-muted">Reorder threshold</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={reorderThreshold}
-                    onChange={(e) => setReorderThreshold(e.target.value)}
-                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
-                  />
-                </label>
+              {/* Buying Cost section: toggle between Unit Price and Bulk Price */}
+              <div className="p-3 bg-slate-50/80 border border-slate-200/90 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-800">Buying Cost / Price</span>
+                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200/70 text-[11px] font-medium">
+                    <button
+                      type="button"
+                      onClick={switchToUnit}
+                      className={`px-2.5 py-0.5 rounded-md transition-all ${
+                        costMode === "unit"
+                          ? "bg-white text-ink shadow-2xs font-semibold"
+                          : "text-slate-600 hover:text-ink"
+                      }`}
+                    >
+                      Per Unit Price
+                    </button>
+                    <button
+                      type="button"
+                      onClick={switchToBulk}
+                      className={`px-2.5 py-0.5 rounded-md transition-all ${
+                        costMode === "bulk"
+                          ? "bg-white text-ink shadow-2xs font-semibold"
+                          : "text-slate-600 hover:text-ink"
+                      }`}
+                    >
+                      Total Bulk Price
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {costMode === "unit" ? (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-ink-muted">Cost per unit (₦)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={unitCost}
+                        onChange={(e) => handleUnitCostChange(e.target.value)}
+                        placeholder="e.g. 1500"
+                        className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono bg-white"
+                      />
+                      {Number(newQuantity) > 1 && unitCost && (
+                        <span className="text-[10px] text-ink-muted">
+                          Total for {newQuantity} {unit || "units"}: ≈ {formatNaira(Number(unitCost) * Number(newQuantity))}
+                        </span>
+                      )}
+                    </label>
+                  ) : (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-ink-muted">Total Bulk Price (₦)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={bulkCost}
+                        onChange={(e) => handleBulkCostChange(e.target.value)}
+                        placeholder="e.g. 18000 for batch"
+                        className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono bg-white"
+                      />
+                      {Number(newQuantity) > 0 && bulkCost ? (
+                        <span className="text-[10px] text-emerald-700 font-medium leading-tight">
+                          ≈ {formatNaira(Number(unitCost))} / {unit || "unit"} ({formatNaira(Number(bulkCost))} ÷ {newQuantity})
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-ink-muted">
+                          Enter quantity to calculate unit cost
+                        </span>
+                      )}
+                    </label>
+                  )}
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-ink-muted">Reorder threshold</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={reorderThreshold}
+                      onChange={(e) => setReorderThreshold(e.target.value)}
+                      className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono bg-white"
+                    />
+                    <span className="text-[10px] text-ink-muted">
+                      Alert when stock falls below this
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <label className="flex flex-col gap-1">

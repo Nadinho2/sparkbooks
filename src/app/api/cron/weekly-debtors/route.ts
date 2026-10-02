@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
 
       const msg =
         `📋 *SparkBooks Weekly Debtors Digest*\n` +
-        `*${tenant.business_name}* &bull; Sunday 8:00 PM Review\n\n` +
+        `*${tenant.business_name}* • Sunday 8:00 PM Review\n\n` +
         `Here is your active debtors list heading into the new week:\n\n` +
         debtorLines.join("\n") +
         `\n\n💰 *Total Unpaid Debt:* *${formatNaira(totalPending)}* across ${debtors.length} customer(s).\n\n` +
@@ -147,7 +147,7 @@ export async function GET(request: NextRequest) {
       if (recentEntries && recentEntries.length > 0) {
         const clearMsg =
           `🎉 *SparkBooks Weekly Debtors Digest*\n` +
-          `*${tenant.business_name}* &bull; Sunday 8:00 PM Review\n\n` +
+          `*${tenant.business_name}* • Sunday 8:00 PM Review\n\n` +
           `Great news! All customer accounts are *100% settled*. You have zero outstanding debts heading into the new week. 🚀\n\n` +
           `Track your sales and inventory anytime:\n` +
           `${appUrl}/dashboard`;

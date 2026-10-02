@@ -10,6 +10,7 @@ import * as Papa from "papaparse";
 import * as XLSX from "xlsx";
 import type { ProductInput } from "@/app/(marketing)/onboarding/actions";
 import { createProducts } from "@/app/(marketing)/onboarding/actions";
+import { formatNaira } from "@/lib/format";
 
 interface Category {
   id: number;
@@ -47,7 +48,9 @@ export function ProductsStep({
   const [singleCategory, setSingleCategory] = useState("");
   const [singleQty, setSingleQty] = useState("");
   const [singleUnit, setSingleUnit] = useState("");
+  const [singleCostMode, setSingleCostMode] = useState<"unit" | "bulk">("unit");
   const [singleCost, setSingleCost] = useState("");
+  const [singleBulkCost, setSingleBulkCost] = useState("");
   const [singleThreshold, setSingleThreshold] = useState("");
   const [singleProducts, setSingleProducts] = useState<ProductInput[]>([]);
   const [singleMatch, setSingleMatch] = useState<string | null>(null);
@@ -57,6 +60,7 @@ export function ProductsStep({
   const [rawRows, setRawRows] = useState<string[][]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [columnMap, setColumnMap] = useState<Record<string, string>>({});
+  const [bulkPriceMode, setBulkPriceMode] = useState<"unit" | "bulk">("unit");
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
   const [validationErrors, setValidationErrors] = useState<Record<number, string[]>>({});
   const [bulkMatch, setBulkMatch] = useState<string | null>(null);
@@ -66,7 +70,8 @@ export function ProductsStep({
     { key: "category", label: "Category", required: false },
     { key: "quantity", label: "Quantity", required: true },
     { key: "unit", label: "Unit", required: true },
-    { key: "unitCost", label: "Unit cost", required: false },
+    { key: "unitCost", label: "Unit cost (₦)", required: false },
+    { key: "bulkCost", label: "Total bulk cost (₦)", required: false },
   ];
 
   /* ──────── Single-item ──────── */
@@ -168,12 +173,23 @@ export function ProductsStep({
       headers.forEach((h, idx) => {
         obj[columnMap[h] ?? ""] = (row[idx] ?? "").toString().trim();
       });
+
+      const qty = parseFloat((obj.quantity ?? "").replace(/,/g, "")) || 0;
+      let cost = obj.unitCost ?? "";
+      if (obj.bulkCost && qty > 0) {
+        const b = parseFloat(obj.bulkCost.replace(/,/g, ""));
+        if (!isNaN(b)) cost = String(Number((b / qty).toFixed(2)));
+      } else if (bulkPriceMode === "bulk" && obj.unitCost && qty > 0) {
+        const b = parseFloat(obj.unitCost.replace(/,/g, ""));
+        if (!isNaN(b)) cost = String(Number((b / qty).toFixed(2)));
+      }
+
       return {
         name: obj.name ?? "",
         category: obj.category ?? "",
         quantity: obj.quantity ?? "",
         unit: obj.unit ?? "",
-        unitCost: obj.unitCost ?? "",
+        unitCost: cost,
         __originalIndex: i,
       };
     });
@@ -343,34 +359,114 @@ export function ProductsStep({
               </label>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">Unit cost (optional)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={singleCost}
-                  onChange={(e) => setSingleCost(e.target.value)}
-                  className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">
-                  Reorder threshold{" "}
-                  <span className="text-ink-muted/60">
-                    (default: 20% of qty)
+            <div className="p-3 bg-slate-50/80 border border-slate-200/90 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-800">Cost / Price</span>
+                <div className="inline-flex rounded-lg p-0.5 bg-slate-200/70 text-[11px] font-medium">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSingleCostMode("unit");
+                      const q = Number(singleQty);
+                      const b = parseFloat(singleBulkCost);
+                      if (q > 0 && !isNaN(b) && !singleCost) {
+                        setSingleCost(String(Number((b / q).toFixed(2))));
+                      }
+                    }}
+                    className={`px-2.5 py-0.5 rounded-md transition-all ${
+                      singleCostMode === "unit"
+                        ? "bg-white text-ink shadow-2xs font-semibold"
+                        : "text-slate-600 hover:text-ink"
+                    }`}
+                  >
+                    Per Unit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSingleCostMode("bulk");
+                      const q = Number(singleQty);
+                      const u = parseFloat(singleCost);
+                      if (q > 0 && !isNaN(u) && !singleBulkCost) {
+                        setSingleBulkCost(String(Math.round(u * q * 100) / 100));
+                      }
+                    }}
+                    className={`px-2.5 py-0.5 rounded-md transition-all ${
+                      singleCostMode === "bulk"
+                        ? "bg-white text-ink shadow-2xs font-semibold"
+                        : "text-slate-600 hover:text-ink"
+                    }`}
+                  >
+                    Bulk Total
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {singleCostMode === "unit" ? (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-ink-muted">Unit cost (₦, optional)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={singleCost}
+                      onChange={(e) => {
+                        setSingleCost(e.target.value);
+                        const q = Number(singleQty);
+                        const u = parseFloat(e.target.value);
+                        if (q > 0 && !isNaN(u)) {
+                          setSingleBulkCost(String(Math.round(u * q * 100) / 100));
+                        }
+                      }}
+                      className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors bg-white"
+                      placeholder="e.g. 1500"
+                    />
+                  </label>
+                ) : (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-ink-muted">Total bulk cost (₦, optional)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={singleBulkCost}
+                      onChange={(e) => {
+                        setSingleBulkCost(e.target.value);
+                        const q = Number(singleQty);
+                        const b = parseFloat(e.target.value);
+                        if (q > 0 && !isNaN(b)) {
+                          setSingleCost(String(Number((b / q).toFixed(2))));
+                        }
+                      }}
+                      className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors bg-white"
+                      placeholder="e.g. 18000 for batch"
+                    />
+                    {Number(singleQty) > 0 && singleCost ? (
+                      <span className="text-[10px] text-emerald-700 font-medium">
+                        ≈ {formatNaira(Number(singleCost))} / {singleUnit || "unit"}
+                      </span>
+                    ) : null}
+                  </label>
+                )}
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-muted">
+                    Reorder threshold{" "}
+                    <span className="text-ink-muted/60">
+                      (default: 20% of qty)
+                    </span>
                   </span>
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={singleThreshold}
-                  onChange={(e) => setSingleThreshold(e.target.value)}
-                  className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors"
-                />
-              </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={singleThreshold}
+                    onChange={(e) => setSingleThreshold(e.target.value)}
+                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors bg-white"
+                  />
+                </label>
+              </div>
             </div>
 
             <button
@@ -473,6 +569,38 @@ export function ProductsStep({
                   </div>
                 ))}
               </div>
+
+              <div className="mt-3.5 p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div>
+                  <span className="text-xs font-semibold text-ink block">Price column type</span>
+                  <span className="text-[11px] text-ink-muted">Is price written as per-unit or total bulk cost?</span>
+                </div>
+                <div className="inline-flex rounded-lg p-0.5 bg-slate-200/80 text-xs font-medium self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setBulkPriceMode("unit")}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      bulkPriceMode === "unit"
+                        ? "bg-white text-ink shadow-2xs font-semibold"
+                        : "text-slate-600 hover:text-ink"
+                    }`}
+                  >
+                    Per-Unit Price
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkPriceMode("bulk")}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      bulkPriceMode === "bulk"
+                        ? "bg-white text-emerald-800 shadow-2xs font-semibold"
+                        : "text-slate-600 hover:text-ink"
+                    }`}
+                  >
+                    Total Bulk Price
+                  </button>
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={generatePreview}
@@ -489,15 +617,11 @@ export function ProductsStep({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-rule">
-                    {FIELDS.map((f) => (
-                      <th
-                        key={f.key}
-                        className="text-left text-xs text-ink-muted font-normal py-2 px-2"
-                      >
-                        {f.label}
-                        {f.required && " *"}
-                      </th>
-                    ))}
+                    <th className="text-left text-xs text-ink-muted font-normal py-2 px-2">Product name *</th>
+                    <th className="text-left text-xs text-ink-muted font-normal py-2 px-2">Category</th>
+                    <th className="text-left text-xs text-ink-muted font-normal py-2 px-2">Quantity *</th>
+                    <th className="text-left text-xs text-ink-muted font-normal py-2 px-2">Unit *</th>
+                    <th className="text-left text-xs text-ink-muted font-normal py-2 px-2">Unit cost (₦)</th>
                   </tr>
                 </thead>
                 <tbody>
