@@ -2,6 +2,7 @@
 
 import {
   useState,
+  useEffect,
   useRef,
   type ChangeEvent,
   type FormEvent,
@@ -10,6 +11,7 @@ import * as Papa from "papaparse";
 import * as XLSX from "xlsx";
 import type { ProductInput } from "@/app/(marketing)/onboarding/actions";
 import { createProducts } from "@/app/(marketing)/onboarding/actions";
+import { createCategory } from "@/app/dashboard/categories/actions";
 import { formatNaira } from "@/lib/format";
 
 interface Category {
@@ -44,6 +46,37 @@ export function ProductsStep({
   const [mode, setMode] = useState<EntryMode>("single");
 
   // ── Single-item form ──
+  const [localCategories, setLocalCategories] = useState<Category[]>(categories);
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [creatingCatLoading, setCreatingCatLoading] = useState(false);
+  const [catError, setCatError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalCategories(categories);
+  }, [categories]);
+
+  async function handleQuickAddCategoryOnboarding() {
+    const trimmed = newCatName.trim();
+    if (!trimmed) return;
+    setCreatingCatLoading(true);
+    setCatError(null);
+    try {
+      const created = await createCategory(tenantId, trimmed);
+      setLocalCategories((prev) => {
+        if (prev.some((c) => c.id === created.id)) return prev;
+        return [...prev, created];
+      });
+      setSingleCategory(String(created.id));
+      setIsCreatingCategory(false);
+      setNewCatName("");
+    } catch (err: any) {
+      setCatError(err?.message || "Failed to create category");
+    } finally {
+      setCreatingCatLoading(false);
+    }
+  }
+
   const [singleName, setSingleName] = useState("");
   const [singleCategory, setSingleCategory] = useState("");
   const [singleQty, setSingleQty] = useState("");
@@ -315,21 +348,86 @@ export function ProductsStep({
                   placeholder="e.g. Indomie Super Pack"
                 />
               </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">Category</span>
-                <select
-                  value={singleCategory}
-                  onChange={(e) => setSingleCategory(e.target.value)}
-                  className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors"
-                >
-                  <option value="">None</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-ink-muted">Category</span>
+                  {!isCreatingCategory && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingCategory(true);
+                        setCatError(null);
+                      }}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 transition-colors flex items-center gap-0.5"
+                    >
+                      <span>+</span>
+                      <span>New</span>
+                    </button>
+                  )}
+                </div>
+
+                {isCreatingCategory ? (
+                  <div className="flex items-center gap-1.5 p-1.5 bg-emerald-50/80 rounded-lg border border-emerald-200">
+                    <input
+                      type="text"
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      placeholder="Category name"
+                      autoFocus
+                      className="flex-1 bg-white border border-slate-300 rounded px-2 py-1 text-xs text-ink outline-none focus:border-emerald-600"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleQuickAddCategoryOnboarding();
+                        } else if (e.key === "Escape") {
+                          setIsCreatingCategory(false);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={creatingCatLoading || !newCatName.trim()}
+                      onClick={handleQuickAddCategoryOnboarding}
+                      className="px-2.5 py-1 bg-emerald-700 text-white rounded text-xs font-semibold hover:bg-emerald-800 disabled:opacity-50"
+                    >
+                      {creatingCatLoading ? "..." : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingCategory(false);
+                        setNewCatName("");
+                      }}
+                      className="p-1 text-xs text-slate-500 hover:text-slate-700"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={singleCategory}
+                    onChange={(e) => {
+                      if (e.target.value === "__create__") {
+                        setIsCreatingCategory(true);
+                      } else {
+                        setSingleCategory(e.target.value);
+                      }
+                    }}
+                    className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors bg-white"
+                  >
+                    <option value="">None</option>
+                    {localCategories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                    <option value="__create__" className="text-emerald-700 font-semibold">
+                      + Add new category...
                     </option>
-                  ))}
-                </select>
-              </label>
+                  </select>
+                )}
+                {catError && <p className="text-[10px] text-red-600">{catError}</p>}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

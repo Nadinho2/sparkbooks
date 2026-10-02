@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import type { ProductRow, Category } from "./ProductTable";
 import { updateProduct, createProduct } from "@/app/dashboard/products/actions";
+import { createCategory } from "@/app/dashboard/categories/actions";
 import { formatNaira } from "@/lib/format";
 import { buildPackagingLadder, formatStockBreakdown, PACKAGING_TEMPLATES, type PackagingUnit } from "@/lib/packaging";
 
@@ -20,6 +21,7 @@ interface EditProductModalProps {
   tenantId: number;
   onClose: () => void;
   onSaved: () => void;
+  onCategoryCreated?: (newCategory: Category) => void;
 }
 
 export function EditProductModal({
@@ -28,8 +30,41 @@ export function EditProductModal({
   tenantId,
   onClose,
   onSaved,
+  onCategoryCreated,
 }: EditProductModalProps) {
   const isAdd = product === null;
+
+  const [availableCategories, setAvailableCategories] = useState<Category[]>(categories);
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [creatingCatLoading, setCreatingCatLoading] = useState(false);
+  const [catError, setCatError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAvailableCategories(categories);
+  }, [categories]);
+
+  async function handleQuickAddCategory() {
+    const trimmed = newCatName.trim();
+    if (!trimmed) return;
+    setCreatingCatLoading(true);
+    setCatError(null);
+    try {
+      const created = await createCategory(tenantId, trimmed);
+      setAvailableCategories((prev) => {
+        if (prev.some((c) => c.id === created.id)) return prev;
+        return [...prev, created];
+      });
+      setCategoryId(String(created.id));
+      setIsCreatingCategory(false);
+      setNewCatName("");
+      onCategoryCreated?.(created);
+    } catch (err: any) {
+      setCatError(err?.message || "Failed to create category");
+    } finally {
+      setCreatingCatLoading(false);
+    }
+  }
 
   const [name, setName] = useState(product?.name ?? "");
   const [categoryId, setCategoryId] = useState(
@@ -216,21 +251,90 @@ export function EditProductModal({
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-ink-muted">Category</span>
-            <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors"
-            >
-              <option value="">None</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-ink-muted">Category</span>
+              {!isCreatingCategory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCreatingCategory(true);
+                    setCatError(null);
+                  }}
+                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 transition-colors flex items-center gap-1"
+                >
+                  <span>+</span>
+                  <span>New Category</span>
+                </button>
+              )}
+            </div>
+
+            {isCreatingCategory ? (
+              <div className="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-100">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    placeholder="Category name (e.g. Drinks, Wigs)"
+                    autoFocus
+                    className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-ink focus:outline-hidden focus:border-emerald-600"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleQuickAddCategory();
+                      } else if (e.key === "Escape") {
+                        setIsCreatingCategory(false);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={creatingCatLoading || !newCatName.trim()}
+                    onClick={handleQuickAddCategory}
+                    className="px-3 py-1.5 bg-emerald-700 text-white rounded-lg text-xs font-semibold hover:bg-emerald-800 disabled:opacity-50 transition-colors shadow-2xs shrink-0"
+                  >
+                    {creatingCatLoading ? "..." : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingCategory(false);
+                      setNewCatName("");
+                      setCatError(null);
+                    }}
+                    className="p-1.5 text-xs text-slate-500 hover:text-slate-700"
+                    title="Cancel"
+                  >
+                    ✕
+                  </button>
+                </div>
+                {catError && <p className="text-[11px] text-red-600">{catError}</p>}
+              </div>
+            ) : (
+              <select
+                value={categoryId}
+                onChange={(e) => {
+                  if (e.target.value === "__create_new__") {
+                    setIsCreatingCategory(true);
+                  } else {
+                    setCategoryId(e.target.value);
+                  }
+                }}
+                className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors bg-white"
+              >
+                <option value="">None (Uncategorized)</option>
+                {availableCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="__create_new__" className="text-emerald-700 font-semibold">
+                  + Add new category...
                 </option>
-              ))}
-            </select>
-          </label>
+              </select>
+            )}
+          </div>
 
           {/* Service toggle */}
           <div className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">

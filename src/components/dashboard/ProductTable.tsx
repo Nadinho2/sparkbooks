@@ -50,10 +50,15 @@ export function ProductTable({
   canBulkUpload = false,
 }: ProductTableProps) {
   const [items, setItems] = useState<ProductRow[]>(products);
+  const [categoryList, setCategoryList] = useState<Category[]>(categories);
 
   useEffect(() => {
     setItems(products);
   }, [products]);
+
+  useEffect(() => {
+    setCategoryList(categories);
+  }, [categories]);
 
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<ProductRow | null>(null);
@@ -186,8 +191,13 @@ export function ProductTable({
       )}
 
       {showCategories && (
-        <div className="mb-6">
-          <CategoryManager tenantId={tenantId} categories={categories} />
+        <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-150">
+          <CategoryManager
+            tenantId={tenantId}
+            categories={categoryList}
+            onClose={() => setShowCategories(false)}
+            onCategoryChange={(updated) => setCategoryList(updated)}
+          />
         </div>
       )}
 
@@ -348,10 +358,10 @@ export function ProductTable({
                 : "bg-white border border-rule text-ink-muted hover:text-ink"
             }`}
           >
-            All ({products.length})
+            All ({items.length})
           </button>
-          {categories.map((c) => {
-            const count = products.filter((p) => p.categoryId === c.id).length;
+          {categoryList.map((c) => {
+            const count = items.filter((p) => p.categoryId === c.id).length;
             return (
               <button
                 key={c.id}
@@ -366,6 +376,14 @@ export function ProductTable({
               </button>
             );
           })}
+          <button
+            onClick={() => setShowCategories(true)}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 border border-dashed border-emerald-400 bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 transition-all flex items-center gap-1 shadow-2xs"
+            title="Add or manage categories"
+          >
+            <span>+</span>
+            <span>Category</span>
+          </button>
         </div>
       </div>
 
@@ -771,12 +789,18 @@ export function ProductTable({
       {editing && (
         <EditProductModal
           product={editing}
-          categories={categories}
+          categories={categoryList}
           tenantId={tenantId}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
             window.location.reload();
+          }}
+          onCategoryCreated={(newCat) => {
+            setCategoryList((prev) => {
+              if (prev.some((c) => c.id === newCat.id)) return prev;
+              return [...prev, newCat];
+            });
           }}
         />
       )}
@@ -785,12 +809,18 @@ export function ProductTable({
       {adding && (
         <EditProductModal
           product={null}
-          categories={categories}
+          categories={categoryList}
           tenantId={tenantId}
           onClose={() => setAdding(false)}
           onSaved={() => {
             setAdding(false);
             window.location.reload();
+          }}
+          onCategoryCreated={(newCat) => {
+            setCategoryList((prev) => {
+              if (prev.some((c) => c.id === newCat.id)) return prev;
+              return [...prev, newCat];
+            });
           }}
         />
       )}
