@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import type { ProductRow, Category } from "./ProductTable";
 import { updateProduct, createProduct } from "@/app/dashboard/products/actions";
 import { formatNaira } from "@/lib/format";
+import { buildPackagingLadder, formatStockBreakdown, PACKAGING_TEMPLATES, type PackagingUnit } from "@/lib/packaging";
 
 const REASONS = [
   "stock count correction",
@@ -38,6 +39,22 @@ export function EditProductModal({
   const [piecesPerPack, setPiecesPerPack] = useState<string>(
     product?.piecesPerPack != null ? String(product.piecesPerPack) : "",
   );
+
+  // Multi-tier packaging units
+  const initialPackaging: PackagingUnit[] = product?.packagingUnits && product.packagingUnits.length > 0
+    ? product.packagingUnits
+    : (product?.piecesPerPack && Number(product.piecesPerPack) > 1
+        ? [{ name: "carton", size: Number(product.piecesPerPack), to_base: Number(product.piecesPerPack) }]
+        : []);
+
+  const [hasPackagingLadder, setHasPackagingLadder] = useState(initialPackaging.length > 0);
+  const [packagingTiers, setPackagingTiers] = useState<Array<{ name: string; size: number }>>(() => {
+    if (initialPackaging.length > 0) {
+      return initialPackaging.map((t) => ({ name: t.name, size: t.size }));
+    }
+    return [{ name: "carton", size: 40 }];
+  });
+
   const [newQuantity, setNewQuantity] = useState(
     product ? String(product.quantity) : "0",
   );
@@ -132,7 +149,12 @@ export function EditProductModal({
 
     setSaving(true);
     setError(null);
-    const parsedPack = piecesPerPack.trim() ? Number(piecesPerPack) : null;
+    const resolvedLadder = hasPackagingLadder && !isService && packagingTiers.length > 0
+      ? buildPackagingLadder(packagingTiers)
+      : null;
+    const topPack = resolvedLadder && resolvedLadder.length > 0
+      ? resolvedLadder[resolvedLadder.length - 1].to_base
+      : (piecesPerPack.trim() ? Number(piecesPerPack) : null);
     const resolvedUnit = unit.trim() || (isService ? "service" : "pcs");
 
     try {
@@ -147,7 +169,8 @@ export function EditProductModal({
             ? null
             : (reorderThreshold ? Number(reorderThreshold) : null),
           isService,
-          piecesPerPack: isService ? null : parsedPack,
+          piecesPerPack: isService ? null : topPack,
+          packagingUnits: resolvedLadder,
         });
       } else {
         await updateProduct(tenantId, {
@@ -162,7 +185,8 @@ export function EditProductModal({
           quantityDelta: isService ? 0 : quantityDelta,
           quantityChangeReason: reason || undefined,
           isService,
-          piecesPerPack: isService ? null : parsedPack,
+          piecesPerPack: isService ? null : topPack,
+          packagingUnits: resolvedLadder,
         });
       }
       onSaved();
@@ -362,23 +386,156 @@ export function EditProductModal({
                 </div>
               </div>
 
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">
-                  Pieces per carton / pack (optional)
-                </span>
-                <input
-                  type="number"
-                  min="1"
-                  step="any"
-                  value={piecesPerPack}
-                  onChange={(e) => setPiecesPerPack(e.target.value)}
-                  placeholder="e.g. 40 (if bought in cartons & sold in pieces)"
-                  className="border border-rule rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-spark transition-colors font-mono"
-                />
-                <span className="text-[10px] text-ink-muted">
-                  Restock in cartons on WhatsApp, and SparkBooks will auto-multiply into single pieces!
-                </span>
-              </label>
+              {/* Multi-Tier Packaging Units (Carton -> Pack -> Card -> Pcs) */}
+              <div className="p-3.5 bg-slate-50/90 border border-slate-200/90 rounded-xl space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={hasPackagingLadder}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setHasPackagingLadder(checked);
+                        if (checked && packagingTiers.length === 0) {
+                          setPackagingTiers([{ name: "carton", size: 40 }]);
+                        }
+                      }}
+                      className="w-4 h-4 rounded border-slate-300 text-spark focus:ring-spark mt-0.5"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">
+                        Multi-Unit Packaging Ladder
+                      </span>
+                      <span className="text-[11px] text-ink-muted block mt-0.5">
+                        For products bought in bulk & sold in parts (e.g. Carton → Pack → Card → Tablets).
+                      </span>
+                    </div>
+                  </label>
+                </div>
+
+                {hasPackagingLadder && (
+                  <div className="space-y-3 pt-2 border-t border-slate-200/80 animate-in fade-in duration-150">
+                    {/* Quick Preset Templates */}
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
+                        Quick Industry Presets:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PACKAGING_TEMPLATES.map((tmpl) => (
+                          <button
+                            key={tmpl.id}
+                            type="button"
+                            onClick={() => {
+                              if (!unit || unit === "pcs") setUnit(tmpl.baseUnit);
+                              setPackagingTiers(tmpl.tiers.map((t) => ({ name: t.name, size: t.size })));
+                            }}
+                            className="text-[10px] px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-100/70 text-slate-700 transition-colors font-medium"
+                          >
+                            {tmpl.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Packaging Steps Ladder */}
+                    <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 pb-1 border-b border-slate-100">
+                        <span>Packaging Tier</span>
+                        <span>Contains</span>
+                      </div>
+
+                      {packagingTiers.map((tier, idx) => {
+                        const subUnitLabel = idx === 0 ? (unit || "pcs") : packagingTiers[idx - 1].name;
+                        const runningLadder = buildPackagingLadder(packagingTiers.slice(0, idx + 1));
+                        const currentMultiplier = runningLadder[idx]?.to_base || tier.size;
+
+                        return (
+                          <div key={idx} className="flex items-center gap-2 py-1">
+                            <span className="text-xs text-slate-400 font-mono w-4">{idx + 1}.</span>
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                value={tier.name}
+                                onChange={(e) => {
+                                  const updated = [...packagingTiers];
+                                  updated[idx].name = e.target.value;
+                                  setPackagingTiers(updated);
+                                }}
+                                placeholder="e.g. pack, carton"
+                                className="w-full text-xs py-1.5 px-2.5 rounded-lg border border-slate-200 font-medium text-ink focus:border-spark outline-none"
+                              />
+                            </div>
+                            <span className="text-xs text-slate-400">has</span>
+                            <div className="w-20">
+                              <input
+                                type="number"
+                                min="1"
+                                value={tier.size}
+                                onChange={(e) => {
+                                  const updated = [...packagingTiers];
+                                  updated[idx].size = Math.max(1, Number(e.target.value) || 1);
+                                  setPackagingTiers(updated);
+                                }}
+                                className="w-full text-xs py-1.5 px-2 rounded-lg border border-slate-200 font-mono text-ink text-center focus:border-spark outline-none"
+                              />
+                            </div>
+                            <span className="text-xs text-slate-600 font-medium w-24 truncate" title={subUnitLabel}>
+                              {subUnitLabel}
+                            </span>
+                            {idx > 0 && currentMultiplier > tier.size && (
+                              <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
+                                (={currentMultiplier.toLocaleString()} {unit || "pcs"})
+                              </span>
+                            )}
+                            {packagingTiers.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPackagingTiers(packagingTiers.filter((_, i) => i !== idx));
+                                }}
+                                className="text-xs text-slate-400 hover:text-rose-600 p-1"
+                                title="Remove tier"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {packagingTiers.length < 4 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaultNames = ["pack", "carton", "crate", "pallet"];
+                            const used = packagingTiers.map((t) => t.name.toLowerCase());
+                            const nextName = defaultNames.find((n) => !used.includes(n)) || "box";
+                            setPackagingTiers([...packagingTiers, { name: nextName, size: 10 }]);
+                          }}
+                          className="mt-2 text-[11px] font-semibold text-spark hover:underline flex items-center gap-1"
+                        >
+                          + Add higher packaging tier
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Live Stock Breakdown Display */}
+                    {Number(newQuantity) > 0 && (
+                      <div className="p-2.5 bg-emerald-50/70 border border-emerald-200/80 rounded-lg text-xs text-emerald-900">
+                        <span className="font-semibold block text-[11px] text-emerald-800">
+                          📦 Current Stock Representation:
+                        </span>
+                        <span className="font-medium text-emerald-950 mt-0.5 block">
+                          {formatStockBreakdown(Number(newQuantity) || 0, unit || "pcs", buildPackagingLadder(packagingTiers)).summary}
+                        </span>
+                        <span className="text-[10px] text-emerald-700 block mt-0.5 font-mono">
+                          (Total base inventory: {Number(newQuantity).toLocaleString()} {unit || "pcs"})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <div className="space-y-3">

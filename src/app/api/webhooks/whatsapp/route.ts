@@ -15,6 +15,12 @@ import {
 } from "@/lib/billing-server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { generateMagicLoginToken } from "@/lib/magic-auth-server";
+import {
+  parsePackagingUnits,
+  resolveUnitMultiplier,
+  formatStockBreakdown,
+  normalizeUnitName,
+} from "@/lib/packaging";
 
 /**
  * GET — WhatsApp webhook verification.
@@ -813,11 +819,23 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   }
 
   // ── 5. FETCH PRODUCT CATALOG ──
-  const { data: catalog } = await supabase
+  let catalog: any[] | null = null;
+  const { data: catWithPkg, error: catPkgErr } = await supabase
     .from("products")
-    .select("id, name, unit, unit_cost, is_service, pieces_per_pack, categories(name)")
+    .select("id, name, unit, unit_cost, is_service, pieces_per_pack, packaging_units, categories(name)")
     .eq("tenant_id", tenant.id)
     .is("deleted_at", null);
+
+  if (catPkgErr) {
+    const { data: catFallback } = await supabase
+      .from("products")
+      .select("id, name, unit, unit_cost, is_service, pieces_per_pack, categories(name)")
+      .eq("tenant_id", tenant.id)
+      .is("deleted_at", null);
+    catalog = catFallback;
+  } else {
+    catalog = catWithPkg;
+  }
 
   const catalogItems = (catalog ?? []).map((p) => {
     const cat = (p.categories as unknown as { name: string }[])?.[0] ?? null;
@@ -829,6 +847,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       unit_cost: p.unit_cost,
       is_service: p.is_service ?? false,
       pieces_per_pack: p.pieces_per_pack != null ? Number(p.pieces_per_pack) : null,
+      packaging_units: parsePackagingUnits(p.packaging_units),
     };
   });
 
@@ -1038,14 +1057,31 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       }
     }
 
-    const { data: prod } = productId
-      ? await supabase.from("products").select("id, name, unit, pieces_per_pack, unit_cost").eq("id", productId).single()
-      : { data: null };
+    let prod: any = null;
+    if (productId) {
+      const { data: pData, error: pErr } = await supabase
+        .from("products")
+        .select("id, name, unit, pieces_per_pack, packaging_units, unit_cost")
+        .eq("id", productId)
+        .single();
+      if (pErr) {
+        const { data: fbData } = await supabase
+          .from("products")
+          .select("id, name, unit, pieces_per_pack, unit_cost")
+          .eq("id", productId)
+          .single();
+        prod = fbData;
+      } else {
+        prod = pData;
+      }
+    }
 
-    const packSize = prod?.pieces_per_pack ? Number(prod.pieces_per_pack) : (parsed.pieces_per_pack ?? null);
     const qty = parsed.quantity ?? 1;
     const unit = parsed.unit ?? "cartons";
-    const isBulk = BULK_UNITS.includes(unit.toLowerCase().trim());
+    const pkgUnits = parsePackagingUnits(prod?.packaging_units, prod?.pieces_per_pack != null ? Number(prod.pieces_per_pack) : null);
+    const ladderMult = resolveUnitMultiplier(unit, pkgUnits, prod?.unit || "pcs", prod?.pieces_per_pack).multiplier;
+    const packSize = parsed.pieces_per_pack ?? (ladderMult > 1 ? ladderMult : (prod?.pieces_per_pack ? Number(prod.pieces_per_pack) : null));
+    const isBulk = BULK_UNITS.includes(unit.toLowerCase().trim()) || (ladderMult > 1);
 
     let totalCost = parsed.amount;
     let perPieceCost = parsed.unit_cost;
@@ -1131,37 +1167,57 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
   if (entry_type === "stock_check") {
     let reply = "";
     if (parsed.matched_product_id) {
-      const { data: prod } = await supabase
+      let prod: any = null;
+      const { data: pData, error: pErr } = await supabase
         .from("products")
-        .select("name, quantity, unit, unit_cost, is_service, pieces_per_pack")
+        .select("name, quantity, unit, unit_cost, is_service, pieces_per_pack, packaging_units")
         .eq("id", parsed.matched_product_id)
         .single();
+
+      if (pErr) {
+        const { data: fbData } = await supabase
+          .from("products")
+          .select("name, quantity, unit, unit_cost, is_service, pieces_per_pack")
+          .eq("id", parsed.matched_product_id)
+          .single();
+        prod = fbData;
+      } else {
+        prod = pData;
+      }
 
       if (prod) {
         if (prod.is_service) {
           reply = `ℹ️ *${prod.name}* is a service (labor/craft — stock is not tracked).`;
         } else {
-          let packNote = "";
-          if (prod.pieces_per_pack && Number(prod.pieces_per_pack) > 1) {
-            const packSize = Number(prod.pieces_per_pack);
-            const cartons = Math.floor(prod.quantity / packSize);
-            const rem = prod.quantity % packSize;
-            packNote = rem === 0 ? ` (~${cartons} cartons)` : ` (~${cartons} cartons, ${rem} pcs)`;
-          }
-          const displayUnit = prod.pieces_per_pack ? "pcs" : prod.unit;
-          reply = `📦 *Stock Check:*\nYou have *${prod.quantity} ${displayUnit}* of *${prod.name}* in stock${packNote}.`;
+          const pkgUnits = parsePackagingUnits(prod.packaging_units, prod.pieces_per_pack != null ? Number(prod.pieces_per_pack) : null);
+          const breakdown = formatStockBreakdown(prod.quantity, prod.unit || "pcs", pkgUnits).summary;
+          reply = `📦 *Stock Check:*\nYou have *${breakdown}* of *${prod.name}* in stock.`;
         }
       } else {
         reply = `Could not find that product in your catalog.`;
       }
     } else {
-      const { data: prods } = await supabase
+      let prods: any[] | null = null;
+      const { data: prodsData, error: prodsErr } = await supabase
         .from("products")
-        .select("name, quantity, unit, is_service, pieces_per_pack")
+        .select("name, quantity, unit, is_service, pieces_per_pack, packaging_units")
         .eq("tenant_id", tenant.id)
         .is("deleted_at", null)
         .order("quantity", { ascending: true })
         .limit(10);
+
+      if (prodsErr) {
+        const { data: fbProds } = await supabase
+          .from("products")
+          .select("name, quantity, unit, is_service, pieces_per_pack")
+          .eq("tenant_id", tenant.id)
+          .is("deleted_at", null)
+          .order("quantity", { ascending: true })
+          .limit(10);
+        prods = fbProds;
+      } else {
+        prods = prodsData;
+      }
 
       if (prods && prods.length > 0) {
         reply =
@@ -1169,14 +1225,9 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           prods
             .map((p) => {
               if (p.is_service) return `• ${p.name}: *(Service)*`;
-              if (p.pieces_per_pack && Number(p.pieces_per_pack) > 1) {
-                const packSize = Number(p.pieces_per_pack);
-                const cartons = Math.floor(p.quantity / packSize);
-                const rem = p.quantity % packSize;
-                const breakdown = rem === 0 ? ` (~${cartons} cartons)` : ` (~${cartons} cartons, ${rem} pcs)`;
-                return `• ${p.name}: *${p.quantity} pcs*${breakdown}`;
-              }
-              return `• ${p.name}: *${p.quantity} ${p.unit}*`;
+              const pkgUnits = parsePackagingUnits(p.packaging_units, p.pieces_per_pack != null ? Number(p.pieces_per_pack) : null);
+              const breakdown = formatStockBreakdown(p.quantity, p.unit || "pcs", pkgUnits).summary;
+              return `• ${p.name}: *${breakdown}*`;
             })
             .join("\n");
       } else {
@@ -1611,20 +1662,34 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
     const customerName = (parsed.customer_name || "Customer").trim();
     const method = parsed.payment_method ?? null;
     const methodTag = method ? ` (${method.toUpperCase()})` : "";
-    // Check if product is service or bulk pack
+    // Check if product is service or has packaging tiers
     let qtyToDeduct = qty;
     let isProdService = false;
+    let prodBaseUnit = "pcs";
     if (productId) {
-      const { data: prodInfo } = await supabase
+      let prodInfo: any = null;
+      const { data: pData, error: pErr } = await supabase
         .from("products")
-        .select("is_service, pieces_per_pack, unit")
+        .select("is_service, pieces_per_pack, packaging_units, unit")
         .eq("id", productId)
         .maybeSingle();
 
-      isProdService = Boolean(prodInfo?.is_service);
-      if (prodInfo?.pieces_per_pack && BULK_UNITS.includes(unit.toLowerCase().trim())) {
-        qtyToDeduct = qty * Number(prodInfo.pieces_per_pack);
+      if (pErr) {
+        const { data: fbData } = await supabase
+          .from("products")
+          .select("is_service, pieces_per_pack, unit")
+          .eq("id", productId)
+          .maybeSingle();
+        prodInfo = fbData;
+      } else {
+        prodInfo = pData;
       }
+
+      isProdService = Boolean(prodInfo?.is_service);
+      prodBaseUnit = prodInfo?.unit || "pcs";
+      const pkgUnits = parsePackagingUnits(prodInfo?.packaging_units, prodInfo?.pieces_per_pack != null ? Number(prodInfo.pieces_per_pack) : null);
+      const mult = resolveUnitMultiplier(unit, pkgUnits, prodInfo?.unit || "pcs", prodInfo?.pieces_per_pack).multiplier;
+      qtyToDeduct = qty * mult;
     }
 
     // Deduct stock if product matched and not a service
@@ -1689,9 +1754,10 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .eq("id", waMsg.id);
 
     const receiptUrl = ledgerId ? getReceiptUrl(ledgerId) : null;
+    const creditUnitBreakdown = qtyToDeduct !== qty ? ` (${qtyToDeduct} ${prodBaseUnit})` : "";
     let reply =
       `📝 *Credit Sale Recorded!*\n` +
-      `• Item: ${qty} ${unit} of *${productName ?? "item"}*\n` +
+      `• Item: ${qty} ${unit}${creditUnitBreakdown} of *${productName ?? "item"}*\n` +
       `• Total Amount: *${nf.format(totalAmount)}*\n` +
       `• Paid Now: *${nf.format(amountPaid)}*${methodTag}\n` +
       `• Outstanding Debt: *${nf.format(amountOwed)}* (Owed by *${customerName}*)`;
@@ -1721,14 +1787,26 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
         ? Math.max(0, Math.abs(parsed.amount))
         : (qty > 0 && unitCost ? qty * unitCost : null);
 
-    // 0. Check product details (service vs pack size)
-    const { data: prodInfo } = productId
-      ? await supabase
+    // 0. Check product details (service vs packaging ladder)
+    let prodInfo: any = null;
+    if (productId) {
+      const { data: pData, error: pErr } = await supabase
+        .from("products")
+        .select("id, name, unit, is_service, pieces_per_pack, packaging_units")
+        .eq("id", productId)
+        .maybeSingle();
+
+      if (pErr) {
+        const { data: fbData } = await supabase
           .from("products")
           .select("id, name, unit, is_service, pieces_per_pack")
           .eq("id", productId)
-          .maybeSingle()
-      : { data: null };
+          .maybeSingle();
+        prodInfo = fbData;
+      } else {
+        prodInfo = pData;
+      }
+    }
 
     if (prodInfo?.is_service) {
       await supabase.from("whatsapp_messages").update({ status: "matched" }).eq("id", waMsg.id);
@@ -1742,11 +1820,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       return;
     }
 
+    const pkgUnits = parsePackagingUnits(prodInfo?.packaging_units, prodInfo?.pieces_per_pack != null ? Number(prodInfo.pieces_per_pack) : null);
+    const ladderMult = resolveUnitMultiplier(unit, pkgUnits, prodInfo?.unit || "pcs", prodInfo?.pieces_per_pack).multiplier;
     const isBulk = BULK_UNITS.includes(unit.toLowerCase().trim());
-    let packSize = parsed.pieces_per_pack ?? (prodInfo?.pieces_per_pack ? Number(prodInfo.pieces_per_pack) : null);
+    let packSize = parsed.pieces_per_pack ?? (ladderMult > 1 ? ladderMult : null);
 
-    // If restocked in cartons/bulk, but pack size is unknown (whether existing or new product):
-    if (isBulk && !packSize) {
+    // If restocked in cartons/bulk, but pack size / multiplier is completely unknown (mult === 1 and not base unit):
+    const isBaseUnit = prodInfo?.unit && normalizeUnitName(unit) === normalizeUnitName(prodInfo.unit);
+    if ((isBulk || (!isBaseUnit && pkgUnits.length > 0)) && !packSize && ladderMult === 1 && !isBaseUnit) {
       const targetName = (productName || parsed.new_product_name || parsed.matched_product_name || "this item").trim();
       await supabase
         .from("whatsapp_messages")
@@ -1778,13 +1859,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     // If pack size was explicitly stated in this message, save it to product
     if (parsed.pieces_per_pack && productId && (!prodInfo?.pieces_per_pack || Number(prodInfo.pieces_per_pack) !== parsed.pieces_per_pack)) {
-      await supabase.from("products").update({ pieces_per_pack: parsed.pieces_per_pack, unit: "pcs" }).eq("id", productId);
+      await supabase.from("products").update({ pieces_per_pack: parsed.pieces_per_pack }).eq("id", productId);
     }
 
-    const actualQty = (isBulk && packSize) ? qty * packSize : qty;
+    const mult = packSize ?? ladderMult;
+    const actualQty = qty * mult;
     const effectiveUnitCost = totalAmount && actualQty > 0
       ? Math.round(totalAmount / actualQty)
-      : (unitCost && isBulk && packSize ? Math.round(unitCost / packSize) : unitCost);
+      : (unitCost && mult > 1 ? Math.round(unitCost / mult) : unitCost);
 
     // If new product (not in catalog yet), auto-create product with initial inventory
     if (!productId && (parsed.is_new_product || parsed.new_product_name)) {
@@ -1843,14 +1925,14 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
           source: isVoice ? "whatsapp_voice" : "whatsapp_text",
           linkedMessageId: waMsg.id,
           alertPhone: fromPhone,
-          reason: isBulk && packSize ? `Restocked ${qty} ${unit} (${actualQty} pcs)` : "Restocked via WhatsApp",
+          reason: mult > 1 ? `Restocked ${qty} ${unit} (${actualQty} ${prodInfo?.unit || "pcs"})` : "Restocked via WhatsApp",
         });
       }
       const updatePayload: Record<string, unknown> = {};
       if (effectiveUnitCost != null) {
         updatePayload.unit_cost = effectiveUnitCost;
       }
-      if (isBulk && packSize) {
+      if (mult > 1 && !prodInfo?.unit) {
         updatePayload.unit = "pcs";
       }
       if (Object.keys(updatePayload).length > 0) {
@@ -1863,8 +1945,8 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     let ledgerId: number | null = null;
     if (totalAmount && totalAmount > 0) {
-      const desc = (isBulk && packSize)
-        ? `Inventory restock: ${qty} ${unit} (${actualQty} pcs) of ${productName}`
+      const desc = mult > 1
+        ? `Inventory restock: ${qty} ${unit} (${actualQty} ${prodInfo?.unit || "pcs"}) of ${productName}`
         : `Inventory restock: ${actualQty} ${unit} of ${productName}`;
 
       const { data: ledger } = await supabase
@@ -1894,11 +1976,11 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       })
       .eq("id", waMsg.id);
 
-    const packNote = (isBulk && packSize) ? ` (${qty} ${unit} × ${packSize} pcs)` : "";
-    const displayUnit = (isBulk && packSize) ? "pcs" : (prodInfo?.unit || unit);
+    const packNote = mult > 1 ? ` (${qty} ${unit} × ${mult} ${prodInfo?.unit || "pcs"})` : "";
+    const displayUnit = prodInfo?.unit || (mult > 1 ? "pcs" : unit);
     let reply = `📦 *Stock Added:* +${actualQty} ${displayUnit} of *${productName}*${packNote}.`;
     if (totalAmount && totalAmount > 0) {
-      reply += ` Recorded purchase cost of *${nf.format(totalAmount)}* (${nf.format(effectiveUnitCost ?? 0)}/pc).`;
+      reply += ` Recorded purchase cost of *${nf.format(totalAmount)}* (${nf.format(effectiveUnitCost ?? 0)}/${displayUnit}).`;
     }
 
     await replyToUser(supabase, tenant.id, fromPhone, reply, senderMemberId);
@@ -1999,20 +2081,34 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
       .select("id")
       .single();
 
-    // Check if product is service or bulk pack
+    // Check if product is service or has packaging tiers
     let qtyToDeduct = qty;
     let isProdService = false;
+    let prodBaseUnit = "pcs";
     if (productId) {
-      const { data: prodInfo } = await supabase
+      let prodInfo: any = null;
+      const { data: pData, error: pErr } = await supabase
         .from("products")
-        .select("is_service, pieces_per_pack, unit")
+        .select("is_service, pieces_per_pack, packaging_units, unit")
         .eq("id", productId)
         .maybeSingle();
 
-      isProdService = Boolean(prodInfo?.is_service);
-      if (prodInfo?.pieces_per_pack && BULK_UNITS.includes(unit.toLowerCase().trim())) {
-        qtyToDeduct = qty * Number(prodInfo.pieces_per_pack);
+      if (pErr) {
+        const { data: fbData } = await supabase
+          .from("products")
+          .select("is_service, pieces_per_pack, unit")
+          .eq("id", productId)
+          .maybeSingle();
+        prodInfo = fbData;
+      } else {
+        prodInfo = pData;
       }
+
+      isProdService = Boolean(prodInfo?.is_service);
+      prodBaseUnit = prodInfo?.unit || "pcs";
+      const pkgUnits = parsePackagingUnits(prodInfo?.packaging_units, prodInfo?.pieces_per_pack != null ? Number(prodInfo.pieces_per_pack) : null);
+      const mult = resolveUnitMultiplier(unit, pkgUnits, prodInfo?.unit || "pcs", prodInfo?.pieces_per_pack).multiplier;
+      qtyToDeduct = qty * mult;
     }
 
     if (productId && qtyToDeduct > 0 && !isProdService) {
@@ -2039,7 +2135,7 @@ async function processMessageAsync(body: WhatsAppWebhookPayload) {
 
     const receiptUrl = ledger?.id ? getReceiptUrl(ledger.id) : null;
     const viaTag = method ? ` via ${method.toUpperCase()}` : "";
-    const bulkNote = (qtyToDeduct !== qty) ? ` (${qtyToDeduct} pcs)` : "";
+    const bulkNote = (qtyToDeduct !== qty) ? ` (${qtyToDeduct} ${prodBaseUnit})` : "";
     let reply = custName
       ? isProdService
         ? `Got it! Recorded *${productName ?? "service"}* (*${nf.format(amount)}*) for *${custName}*${viaTag}.`

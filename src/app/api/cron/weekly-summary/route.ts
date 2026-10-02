@@ -86,9 +86,10 @@ export async function GET(request: NextRequest) {
     const netProfit = totalSales - totalExpenses;
     const count = entries.length;
 
+    const storeName = (tenant.business_name || "Your Store").replace(/&bull;?/gi, "").trim();
     const summaryText =
       `📊 *SparkBooks Weekly Summary*\n` +
-      `Business: *${tenant.business_name}*\n` +
+      `Business: *${storeName}*\n` +
       `Period: Past 7 Days\n\n` +
       `💰 *Total Sales:* ${formatNaira(totalSales)}\n` +
       `💸 *Total Expenses:* ${formatNaira(totalExpenses)}\n` +

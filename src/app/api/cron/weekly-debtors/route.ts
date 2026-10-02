@@ -99,9 +99,11 @@ export async function GET(request: NextRequest) {
         return `• *${d.customer_name}*: owing *${formatNaira(d.amount_owed)}* (paid ${formatNaira(d.amount_paid)})`;
       });
 
+      const storeName = (tenant.business_name || "Your Store").replace(/&bull;?/gi, "").trim();
       const msg =
         `📋 *SparkBooks Weekly Debtors Digest*\n` +
-        `*${tenant.business_name}* • Sunday 8:00 PM Review\n\n` +
+        `*${storeName}*\n` +
+        `📅 Sunday 8:00 PM Review\n\n` +
         `Here is your active debtors list heading into the new week:\n\n` +
         debtorLines.join("\n") +
         `\n\n💰 *Total Unpaid Debt:* *${formatNaira(totalPending)}* across ${debtors.length} customer(s).\n\n` +

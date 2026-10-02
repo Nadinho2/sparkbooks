@@ -11,6 +11,7 @@ export interface CatalogItem {
   unit_cost: number | null;
   is_service?: boolean;
   pieces_per_pack?: number | null;
+  packaging_units?: any[] | null;
 }
 
 export interface ChatMessage {
@@ -54,15 +55,27 @@ export interface ParsedEntry {
 
 export function buildSystemPrompt(catalog: CatalogItem[]): string {
   const catalogJson = JSON.stringify(
-    catalog.map((c) => ({
-      id: c.id,
-      name: c.name,
-      category: c.category ?? "Uncategorized",
-      unit: c.unit,
-      unit_cost: c.unit_cost,
-      is_service: c.is_service ?? false,
-      pieces_per_pack: c.pieces_per_pack ?? null,
-    })),
+    catalog.map((c) => {
+      let pkgInfo: string | undefined = undefined;
+      if (Array.isArray(c.packaging_units) && c.packaging_units.length > 0) {
+        pkgInfo = c.packaging_units
+          .map((t: any) => `${t.unit_name} (${t.to_base} ${c.unit})`)
+          .join(", ");
+      } else if (c.pieces_per_pack && c.pieces_per_pack > 1) {
+        pkgInfo = `carton/pack (${c.pieces_per_pack} ${c.unit})`;
+      }
+
+      return {
+        id: c.id,
+        name: c.name,
+        category: c.category ?? "Uncategorized",
+        unit: c.unit,
+        unit_cost: c.unit_cost,
+        is_service: c.is_service ?? false,
+        pieces_per_pack: c.pieces_per_pack ?? null,
+        packaging_tiers: pkgInfo,
+      };
+    }),
     null,
     2,
   );
@@ -161,10 +174,11 @@ Rules:
    - Do NOT confuse product names with customer names (e.g. "Bone Straight" is product, "Amaka" is customer).
    - If no customer is mentioned, set customer_name=null.
 
-6. SERVICES & BULK PACK SIZES:
+6. SERVICES & PACKAGING UNITS / MULTI-TIER LADDER:
    - Products with "is_service": true are services/labor (e.g. tailoring, haircut, alterations). They are logged as "sale" or "debt" without physical stock.
-   - When a restock or sale mentions bulk packaging (e.g. carton, pack, crate, bundle, roll, box), set 'unit' to the bulk unit.
-   - If the merchant states how many single pieces are inside a carton (e.g. "40 per carton", "50 in a pack"), extract 'pieces_per_pack' as that number.
+   - Products have a base unit (e.g. pcs, tablets, sachets, bottles) and can have multi-tier packaging units (e.g. carton, pack, card, roll, crate, box).
+   - When a sale or restock mentions ANY unit (e.g. "Sold 2 cards of Paracetamol", "Sold 1 pack", "Restocked 3 cartons", "Sold 5 rolls of Milo", "Sold 10 tablets"), ALWAYS extract the EXACT unit stated into the 'unit' field (e.g. "card", "pack", "carton", "roll", "crate", "box", "tablet", "sachet", "pcs").
+   - If the merchant states new pieces per pack or carton size (e.g. "40 per carton", "10 tablets in a card"), extract 'pieces_per_pack' as that number.
 
 7. CONVERSATIONAL MEMORY & CHAT THREAD CONTEXT:
    - When previous chat messages are provided in the dialogue, use them to resolve context:

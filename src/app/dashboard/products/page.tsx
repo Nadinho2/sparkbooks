@@ -1,21 +1,37 @@
 import { getCurrentTenant, isTenantOwner } from "@/lib/tenant-server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ProductTable, type ProductRow, type Category } from "@/components/dashboard/ProductTable";
+import { parsePackagingUnits } from "@/lib/packaging";
 
 export default async function ProductsPage() {
   const tenant = await getCurrentTenant();
   const isOwner = await isTenantOwner();
   const supabase = createAdminClient();
 
-  // Fetch non-deleted products with category names
-  const { data: products } = await supabase
+  // Fetch non-deleted products with category names (gracefully fallback if packaging_units column not yet created)
+  let products: any[] | null = null;
+  const { data: withPkg, error: pkgErr } = await supabase
     .from("products")
     .select(
-      "id, name, category_id, quantity, unit, unit_cost, reorder_threshold, is_service, pieces_per_pack, categories(name)",
+      "id, name, category_id, quantity, unit, unit_cost, reorder_threshold, is_service, pieces_per_pack, packaging_units, categories(name)",
     )
     .eq("tenant_id", tenant.id)
     .is("deleted_at", null)
     .order("name");
+
+  if (!pkgErr) {
+    products = withPkg;
+  } else {
+    const { data: withoutPkg } = await supabase
+      .from("products")
+      .select(
+        "id, name, category_id, quantity, unit, unit_cost, reorder_threshold, is_service, pieces_per_pack, categories(name)",
+      )
+      .eq("tenant_id", tenant.id)
+      .is("deleted_at", null)
+      .order("name");
+    products = withoutPkg;
+  }
 
   // Fetch categories
   const { data: categoryList } = await supabase
@@ -125,6 +141,7 @@ export default async function ProductsPage() {
       totalRevenue: salesInfo.totalRevenue,
       isService,
       piecesPerPack,
+      packagingUnits: parsePackagingUnits(p.packaging_units, piecesPerPack),
     };
   });
 

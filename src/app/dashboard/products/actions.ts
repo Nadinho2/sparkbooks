@@ -8,6 +8,8 @@ import { checkProductLimit } from "@/lib/billing-server";
 import { findFuzzyMatches } from "@/lib/tenant";
 import { getCurrentTenantId, isTenantOwner } from "@/lib/tenant-server";
 
+import type { PackagingUnit } from "@/lib/packaging";
+
 export type EditProductData = {
   id: number;
   name: string;
@@ -17,6 +19,7 @@ export type EditProductData = {
   reorderThreshold: number | null;
   isService?: boolean;
   piecesPerPack?: number | null;
+  packagingUnits?: PackagingUnit[] | null;
   /** Only set if quantity changed — the delta (new - old) */
   quantityDelta?: number;
   quantityChangeReason?: string;
@@ -31,6 +34,7 @@ export type CreateProductData = {
   reorderThreshold: number | null;
   isService?: boolean;
   piecesPerPack?: number | null;
+  packagingUnits?: PackagingUnit[] | null;
 };
 
 export async function createProduct(
@@ -68,26 +72,54 @@ export async function createProduct(
   }
 
   const isService = Boolean(data.isService);
+  const packagingUnits = !isService && data.packagingUnits && data.packagingUnits.length > 0
+    ? data.packagingUnits
+    : null;
+  const topPackSize = packagingUnits
+    ? packagingUnits[packagingUnits.length - 1].to_base
+    : (data.piecesPerPack ?? null);
 
-  const { data: created, error } = await supabase
+  const insertPayload: Record<string, unknown> = {
+    tenant_id: tenantId,
+    name: data.name.trim(),
+    category_id: data.categoryId,
+    quantity: isService ? 0 : data.quantity,
+    unit: data.unit,
+    unit_cost: data.unitCost,
+    reorder_threshold: isService
+      ? null
+      : (data.reorderThreshold ?? Math.round(data.quantity * 0.2)),
+    is_service: isService,
+    pieces_per_pack: isService ? null : topPackSize,
+  };
+
+  if (packagingUnits) {
+    insertPayload.packaging_units = packagingUnits;
+  }
+
+  let created: { id: number; quantity: number; is_service: boolean } | null = null;
+  const { data: res, error } = await supabase
     .from("products")
-    .insert({
-      tenant_id: tenantId,
-      name: data.name.trim(),
-      category_id: data.categoryId,
-      quantity: isService ? 0 : data.quantity,
-      unit: data.unit,
-      unit_cost: data.unitCost,
-      reorder_threshold: isService
-        ? null
-        : (data.reorderThreshold ?? Math.round(data.quantity * 0.2)),
-      is_service: isService,
-      pieces_per_pack: isService ? null : (data.piecesPerPack ?? null),
-    })
+    .insert(insertPayload)
     .select("id, quantity, is_service")
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.message.includes("packaging_units") && "packaging_units" in insertPayload) {
+      delete insertPayload.packaging_units;
+      const retry = await supabase
+        .from("products")
+        .insert(insertPayload)
+        .select("id, quantity, is_service")
+        .single();
+      if (retry.error) throw new Error(retry.error.message);
+      created = retry.data;
+    } else {
+      throw new Error(error.message);
+    }
+  } else {
+    created = res;
+  }
 
   // Write initial stock movement if quantity > 0 and not a service
   if (created && !created.is_service && Number(created.quantity) > 0) {
@@ -116,6 +148,13 @@ export async function updateProduct(
   const supabase = createAdminClient();
 
   const isService = Boolean(data.isService);
+  const packagingUnits = !isService && data.packagingUnits && data.packagingUnits.length > 0
+    ? data.packagingUnits
+    : null;
+  const topPackSize = packagingUnits
+    ? packagingUnits[packagingUnits.length - 1].to_base
+    : (data.piecesPerPack ?? null);
+
   const updatePayload: Record<string, unknown> = {
     name: data.name.trim(),
     category_id: data.categoryId,
@@ -123,8 +162,12 @@ export async function updateProduct(
     unit_cost: data.unitCost,
     reorder_threshold: isService ? null : data.reorderThreshold,
     is_service: isService,
-    pieces_per_pack: isService ? null : (data.piecesPerPack ?? null),
+    pieces_per_pack: isService ? null : topPackSize,
   };
+
+  if (data.packagingUnits !== undefined) {
+    updatePayload.packaging_units = packagingUnits;
+  }
 
   if (isService) {
     updatePayload.quantity = 0;
@@ -137,7 +180,19 @@ export async function updateProduct(
     .eq("id", data.id)
     .eq("tenant_id", tenantId);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.message.includes("packaging_units") && "packaging_units" in updatePayload) {
+      delete updatePayload.packaging_units;
+      const retry = await supabase
+        .from("products")
+        .update(updatePayload)
+        .eq("id", data.id)
+        .eq("tenant_id", tenantId);
+      if (retry.error) throw new Error(retry.error.message);
+    } else {
+      throw new Error(error.message);
+    }
+  }
 
   // If quantity changed and not service, use centralized stock update (also handles low-stock alert)
   if (!isService && data.quantityDelta && data.quantityDelta !== 0) {

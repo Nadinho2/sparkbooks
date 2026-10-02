@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { sendTextMessage } from "@/lib/whatsapp";
 import { formatNaira } from "@/lib/format";
+import { parsePackagingUnits, formatStockBreakdown } from "@/lib/packaging";
 
 /**
  * GET /api/cron/daily-closing
@@ -74,14 +75,29 @@ export async function GET(request: NextRequest) {
       .gte("created_at", todayIso);
 
     // 2. Fetch any low stock items (< 5 units)
-    const { data: lowStock } = await supabase
+    let lowStock: any[] | null = null;
+    const { data: lsWithPkg, error: lsErr } = await supabase
       .from("products")
-      .select("name, quantity, unit")
+      .select("name, quantity, unit, pieces_per_pack, packaging_units")
       .eq("tenant_id", tenant.id)
       .is("deleted_at", null)
       .lte("quantity", 5)
       .order("quantity", { ascending: true })
       .limit(3);
+
+    if (lsErr) {
+      const { data: lsFallback } = await supabase
+        .from("products")
+        .select("name, quantity, unit, pieces_per_pack")
+        .eq("tenant_id", tenant.id)
+        .is("deleted_at", null)
+        .lte("quantity", 5)
+        .order("quantity", { ascending: true })
+        .limit(3);
+      lowStock = lsFallback;
+    } else {
+      lowStock = lsWithPkg;
+    }
 
     // 3. Fetch today's active customer debts
     let todayDebtorsCount = 0;
@@ -136,9 +152,12 @@ export async function GET(request: NextRequest) {
       month: "short",
     });
 
+    const storeName = (tenant.business_name || "Your Store").replace(/&bull;?/gi, "").trim();
+
     let msg =
       `🌙 *SparkBooks Daily Closing Report*\n` +
-      `*${tenant.business_name}* • ${dateStr}\n\n` +
+      `*${storeName}*\n` +
+      `📅 ${dateStr}\n\n` +
       `💰 *Total Sales:* ${formatNaira(totalSales)} (${saleCount} transactions)\n`;
 
     if (totalSales > 0) {
@@ -161,7 +180,12 @@ export async function GET(request: NextRequest) {
     if (lowStock && lowStock.length > 0) {
       msg += `📦 *Low Stock Alerts:*\n`;
       for (const p of lowStock) {
-        msg += `• ${p.name}: only *${p.quantity} ${p.unit}* left\n`;
+        const pkgUnits = parsePackagingUnits(
+          (p as any).packaging_units,
+          (p as any).pieces_per_pack != null ? Number((p as any).pieces_per_pack) : null,
+        );
+        const breakdown = formatStockBreakdown(p.quantity, p.unit || "pcs", pkgUnits).summary;
+        msg += `• ${p.name}: only *${breakdown}* left\n`;
       }
       msg += `\n`;
     }

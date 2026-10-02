@@ -8,6 +8,8 @@ import { CategoryManager } from "./CategoryManager";
 import { BulkUploadModal } from "./BulkUploadModal";
 import { softDeleteProduct, renameProduct } from "@/app/dashboard/products/actions";
 
+import { formatStockBreakdown, type PackagingUnit } from "@/lib/packaging";
+
 export interface ProductRow {
   id: number;
   name: string;
@@ -24,6 +26,7 @@ export interface ProductRow {
   totalRevenue?: number;
   isService?: boolean;
   piecesPerPack?: number | null;
+  packagingUnits?: PackagingUnit[] | null;
 }
 
 export interface Category {
@@ -512,18 +515,36 @@ export function ProductTable({
                         Service
                       </span>
                     ) : p.isLowStock ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        {p.quantity} {p.unit}
-                      </span>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          {p.packagingUnits && p.packagingUnits.length > 0
+                            ? formatStockBreakdown(p.quantity, p.unit, p.packagingUnits).summary
+                            : `${p.quantity} ${p.unit}`}
+                        </span>
+                        {p.packagingUnits && p.packagingUnits.length > 0 && (
+                          <span className="text-[10px] text-ink-muted font-mono">
+                            ({p.quantity.toLocaleString()} {p.unit})
+                          </span>
+                        )}
+                      </div>
                     ) : p.quantity === 0 ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
                         Out of stock
                       </span>
                     ) : (
-                      <span className="font-mono text-ink font-medium">
-                        {p.quantity} <span className="text-ink-muted text-[11px]">{p.unit}</span>
-                      </span>
+                      <div className="flex flex-col items-end">
+                        <span className="font-mono text-ink font-medium text-xs sm:text-sm">
+                          {p.packagingUnits && p.packagingUnits.length > 0
+                            ? formatStockBreakdown(p.quantity, p.unit, p.packagingUnits).summary
+                            : `${p.quantity} ${p.unit}`}
+                        </span>
+                        {p.packagingUnits && p.packagingUnits.length > 0 && (
+                          <span className="text-[10px] text-ink-muted font-mono">
+                            Total: {p.quantity.toLocaleString()} {p.unit}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </td>
                   <td className="py-3.5 px-4 text-right font-mono text-ink-muted">
@@ -667,10 +688,15 @@ export function ProductTable({
                 ) : (
                   <>
                     <span className={`font-mono text-sm font-medium ${p.isLowStock ? "text-flag" : "text-ink"}`}>
-                      {p.quantity}
-                      <span className="text-ink-muted text-xs ml-1">{p.unit}</span>
+                      {p.packagingUnits && p.packagingUnits.length > 0
+                        ? formatStockBreakdown(p.quantity, p.unit, p.packagingUnits).summary
+                        : `${p.quantity} ${p.unit}`}
                     </span>
-                    <span className="block text-[10px] text-ink-muted">On hand</span>
+                    <span className="block text-[10px] text-ink-muted">
+                      {p.packagingUnits && p.packagingUnits.length > 0
+                        ? `Total: ${p.quantity.toLocaleString()} ${p.unit}`
+                        : "On hand"}
+                    </span>
                   </>
                 )}
               </div>
